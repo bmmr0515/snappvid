@@ -576,6 +576,11 @@
                     <input type="password" id="password" placeholder="Password" required>
                 </div>
                 <button type="submit" class="modal-btn" id="authSubmitBtn">Continue</button>
+                <div style="margin-top: 16px; text-align: center; color: var(--text-secondary); font-size: 14px;">or</div>
+                <button type="button" class="modal-btn" style="background: #ffffff; color: #000000; margin-top: 16px; display: flex; align-items: center; justify-content: center; gap: 8px;" onclick="window.location.href='/auth/google/login'">
+                    <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" style="width: 18px; height: 18px;">
+                    Continue with Google
+                </button>
             </form>
         </div>
     </div>
@@ -644,6 +649,32 @@
         let currentEmail = null;
         let currentCredits = 0;
         
+        // Check for OAuth Callback in URL
+        window.addEventListener('DOMContentLoaded', () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.get('oauth') === 'success') {
+                const email = urlParams.get('email');
+                const credits = parseInt(urlParams.get('credits')) || 0;
+                
+                if (email) {
+                    currentEmail = email;
+                    currentCredits = credits;
+                    
+                    const loginBtn = document.getElementById('headerLoginBtn');
+                    loginBtn.textContent = email;
+                    document.getElementById('headerSignupBtn').style.display = 'none';
+                    
+                    updateCreditDisplay();
+                    
+                    // Clean up URL without refreshing
+                    window.history.replaceState({}, document.title, window.location.pathname);
+                    
+                    // Force the paywall logic for new users or let them see the site
+                    openPaywallModal();
+                }
+            }
+        });
+
         function updateCreditDisplay() {
             const countSpan = document.getElementById('creditCount');
             countSpan.textContent = currentCredits;

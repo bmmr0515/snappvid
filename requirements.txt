@@ -10,3 +10,6 @@ stripe
 bcrypt
 python-multipart
 slowapi
+authlib
+httpx
+itsdangerous
