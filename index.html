@@ -1,0 +1,964 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SnappVid - AI Video Generator</title>
+    <style>
+        /* Apple-like Dark Mode Styles */
+        :root {
+            --bg-color: #000000;
+            --surface-color: #1c1c1e;
+            --surface-hover: #2c2c2e;
+            --text-primary: #f5f5f7;
+            --text-secondary: #86868b;
+            --accent: #0a84ff; /* Apple Blue */
+            --accent-hover: #0071e3;
+            --border-color: rgba(255, 255, 255, 0.15);
+            --border-radius: 14px;
+            --transition: all 0.2s cubic-bezier(0.25, 0.1, 0.25, 1);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Header */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 32px;
+            background: rgba(28, 28, 30, 0.8);
+            backdrop-filter: saturate(180%) blur(20px);
+            -webkit-backdrop-filter: saturate(180%) blur(20px);
+            border-bottom: 1px solid var(--border-color);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .logo {
+            font-size: 20px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            display: flex;
+            align-items: center;
+        }
+        
+        .logo img {
+            height: 40px;
+            border-radius: 8px;
+            /* ロゴ画像の黒背景が気になる場合は以下のブレンドモードが有効です */
+            /* mix-blend-mode: screen; */
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .btn-text {
+            background: transparent;
+            border: none;
+            color: var(--text-primary);
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: var(--transition);
+            padding: 8px 12px;
+            border-radius: 8px;
+        }
+
+        .btn-text:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .btn-primary {
+            background: var(--text-primary);
+            color: var(--bg-color);
+            border: none;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition);
+        }
+
+        .btn-primary:hover {
+            transform: scale(0.98);
+            opacity: 0.9;
+        }
+
+        .settings-icon {
+            font-size: 20px;
+            cursor: pointer;
+            color: var(--text-secondary);
+            transition: var(--transition);
+            padding: 4px;
+        }
+
+        .settings-icon:hover {
+            color: var(--text-primary);
+        }
+
+        /* Main Content */
+        main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 40px 20px;
+        }
+
+        .hero {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .hero h1 {
+            font-size: 48px;
+            font-weight: 700;
+            letter-spacing: -1px;
+            margin-bottom: 12px;
+        }
+
+        .hero p {
+            font-size: 18px;
+            color: var(--text-secondary);
+        }
+
+        /* Input Area */
+        .input-container {
+            width: 100%;
+            max-width: 600px;
+            position: relative;
+        }
+
+        .theme-input {
+            width: 100%;
+            padding: 24px 32px;
+            padding-right: 180px;
+            font-size: 20px;
+            background: var(--surface-color);
+            border: 1px solid var(--border-color);
+            border-radius: 40px;
+            color: var(--text-primary);
+            outline: none;
+            transition: var(--transition);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }
+
+        .theme-input:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 4px rgba(10, 132, 255, 0.2);
+        }
+
+        .theme-input::placeholder {
+            color: #666;
+        }
+
+        .btn-generate {
+            position: absolute;
+            right: 8px;
+            top: 8px;
+            bottom: 8px;
+            padding: 0 24px;
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: 32px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-generate:hover {
+            background: var(--accent-hover);
+            transform: scale(0.98);
+        }
+
+        .btn-generate:disabled {
+            background: #333;
+            color: #888;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* Spinner */
+        .spinner {
+            display: none;
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Result Area */
+        .result-area {
+            margin-top: 48px;
+            width: 100%;
+            max-width: 800px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 24px;
+            opacity: 1;
+            transition: var(--transition);
+        }
+
+        .result-area.hidden {
+            opacity: 0;
+            height: 0;
+            overflow: hidden;
+            margin-top: 0;
+        }
+
+        .video-wrapper {
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            gap: 40px;
+            align-items: center;
+        }
+
+        video {
+            max-width: 300px;
+            width: 100%;
+            border-radius: 20px;
+            background: #000;
+            aspect-ratio: 9/16;
+            object-fit: cover;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+            border: 1px solid var(--border-color);
+        }
+
+        .action-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .btn-youtube {
+            background: #FF0000;
+            color: white;
+            border: none;
+            padding: 16px 24px;
+            border-radius: var(--border-radius);
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            box-shadow: 0 4px 15px rgba(255, 0, 0, 0.3);
+        }
+
+        .btn-youtube:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(255, 0, 0, 0.4);
+        }
+
+        /* Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7);
+            backdrop-filter: blur(5px);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            opacity: 0;
+            pointer-events: none;
+            transition: var(--transition);
+        }
+
+        .modal-overlay.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .modal {
+            background: var(--surface-color);
+            padding: 32px;
+            border-radius: 24px;
+            width: 100%;
+            max-width: 400px;
+            border: 1px solid var(--border-color);
+            box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+            transform: translateY(20px);
+            transition: var(--transition);
+            position: relative;
+        }
+
+        .modal-overlay.active .modal {
+            transform: translateY(0);
+        }
+
+        .modal h2 {
+            margin-bottom: 24px;
+            font-weight: 600;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 16px;
+            background: #000;
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            color: white;
+            font-size: 16px;
+            outline: none;
+        }
+
+        .form-group input:focus {
+            border-color: var(--accent);
+        }
+
+        .modal-btn {
+            width: 100%;
+            padding: 16px;
+            background: var(--text-primary);
+            color: var(--bg-color);
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 8px;
+        }
+
+        .modal-btn:hover {
+            opacity: 0.9;
+        }
+
+        .close-btn {
+            position: absolute;
+            top: 24px;
+            right: 24px;
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 24px;
+            cursor: pointer;
+        }
+        
+        /* Paywall CSS */
+        .paywall-container {
+            display: flex;
+            gap: 24px;
+            justify-content: center;
+            margin-bottom: 24px;
+            align-items: stretch;
+            flex-wrap: wrap;
+        }
+        .paywall-card {
+            background: var(--surface-color);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 32px 24px;
+            flex: 1;
+            min-width: 260px;
+            max-width: 320px;
+            display: flex;
+            flex-direction: column;
+            text-align: left;
+            position: relative;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            transition: var(--transition);
+        }
+        .paywall-card.recommended {
+            border: 2px solid var(--accent);
+            transform: scale(1.05);
+            background: #232326;
+            z-index: 10;
+        }
+        .recommended-badge {
+            position: absolute;
+            top: -14px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--accent);
+            color: white;
+            padding: 6px 16px;
+            border-radius: 14px;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            box-shadow: 0 4px 12px rgba(10, 132, 255, 0.4);
+        }
+        .plan-name {
+            font-size: 28px;
+            font-weight: 800;
+            margin-bottom: 8px;
+            color: var(--text-primary);
+        }
+        .plan-price {
+            font-size: 42px;
+            font-weight: 800;
+            margin-bottom: 4px;
+            letter-spacing: -1px;
+        }
+        .plan-price-sub {
+            font-size: 14px;
+            color: var(--text-secondary);
+            margin-bottom: 24px;
+        }
+        .plan-features {
+            list-style: none;
+            padding: 0;
+            margin: 0 0 32px 0;
+            flex: 1;
+        }
+        .plan-features li {
+            font-size: 15px;
+            margin-bottom: 14px;
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            color: #d1d1d6;
+        }
+        .plan-features li::before {
+            content: "✓";
+            color: var(--accent);
+            font-weight: bold;
+            font-size: 16px;
+        }
+        .paywall-card .btn-primary {
+            width: 100%;
+            padding: 16px;
+            font-size: 16px;
+            margin-top: auto;
+        }
+        
+        @media (max-width: 768px) {
+            .hero h1 { font-size: 36px; }
+            .theme-input { font-size: 16px; padding: 20px; padding-right: 20px; border-radius: 20px; }
+            .btn-generate { position: relative; width: 100%; margin-top: 16px; right: 0; padding: 16px; border-radius: 16px; justify-content: center;}
+            .input-container { display: flex; flex-direction: column; }
+            .video-wrapper { flex-direction: column; gap: 24px; }
+            header { padding: 16px; }
+            .btn-text { display: none; }
+            .floating-upgrade-btn.visible { display: flex; }
+            
+            .paywall-card.recommended { transform: scale(1); z-index: 1; }
+            .paywall-container { flex-direction: column; align-items: center; }
+            .paywall-card { width: 100%; max-width: 100%; }
+        }
+
+        /* Floating Button & Warnings */
+        .floating-upgrade-btn {
+            display: none;
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            background: linear-gradient(135deg, #FFD700 0%, #FDB931 100%);
+            color: #000;
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            border: none;
+            box-shadow: 0 6px 20px rgba(255, 215, 0, 0.4);
+            font-size: 28px;
+            cursor: pointer;
+            z-index: 999;
+            align-items: center;
+            justify-content: center;
+            transition: var(--transition);
+        }
+        .floating-upgrade-btn:hover {
+            transform: scale(1.1);
+        }
+        
+        @keyframes flashWarning {
+            0% { color: #ff3b30; text-shadow: 0 0 8px rgba(255, 59, 48, 0.6); }
+            50% { color: #ff9500; text-shadow: 0 0 2px rgba(255, 149, 0, 0.3); }
+            100% { color: #ff3b30; text-shadow: 0 0 8px rgba(255, 59, 48, 0.6); }
+        }
+        .credit-warning {
+            animation: flashWarning 1s infinite;
+        }
+    </style>
+</head>
+<body>
+
+    <button id="floatingUpgradeBtn" class="floating-upgrade-btn" onclick="openPlanModal()">⚡️</button>
+
+    <!-- Header -->
+    <header>
+        <div class="logo">
+            <img src="logo.png" alt="SnappVid Logo">
+        </div>
+        <div class="header-actions">
+            <div id="creditDisplay" style="display: none; align-items: center; gap: 12px; margin-right: 16px;">
+                <span style="color: var(--text-secondary); font-weight: 500; display: flex; align-items: center; gap: 8px;">
+                    Credits: <span id="creditCount" style="color: white; font-weight: bold; font-size: 16px;">0</span>
+                    <button id="headerPlusBtn" onclick="openTopupModal()" title="Buy Credits" style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: white; border-radius: 50%; width: 22px; height: 22px; font-size: 14px; font-weight: bold; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'">+</button>
+                </span>
+            </div>
+            <button class="btn-text" id="headerLoginBtn" onclick="openModal('Login')">Login</button>
+            <button class="btn-primary" id="headerSignupBtn" onclick="openModal('Sign Up')">Sign Up</button>
+            <div class="settings-icon" onclick="openModal('Settings')">⚙️</div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main>
+        <div class="hero">
+            <h1>Create magic in seconds.</h1>
+            <p>Enter a topic and let AI generate a complete short video for you.</p>
+        </div>
+
+        <form id="generateForm" class="input-container">
+            <input type="text" id="theme" class="theme-input" placeholder="e.g. The mysterious life of long-tailed tits..." required autocomplete="off">
+            <button type="submit" id="submitBtn" class="btn-generate">
+                <span class="spinner" id="spinner"></span>
+                <span id="btnText">Generate</span>
+            </button>
+        </form>
+
+        <div id="resultArea" class="result-area hidden">
+            <div class="video-wrapper">
+                <video id="resultVideo" controls playsinline></video>
+                <div class="action-panel">
+                    <!-- YouTube Post Feature (Coming Soon) 
+                    <button class="btn-youtube" id="youtubeBtn">
+                        ▶️ Post to YouTube
+                    </button>
+                    -->
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Modal -->
+    <div class="modal-overlay" id="modalOverlay">
+        <div class="modal">
+            <button class="close-btn" onclick="closeModal()">&times;</button>
+            <h2 id="modalTitle">Sign Up</h2>
+            <form id="authForm">
+                <div class="form-group">
+                    <input type="email" id="email" placeholder="Email Address" required>
+                </div>
+                <div class="form-group">
+                    <input type="password" id="password" placeholder="Password" required>
+                </div>
+                <button type="submit" class="modal-btn" id="authSubmitBtn">Continue</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Plans Modal -->
+    <div class="modal-overlay" id="planModalOverlay" style="background: rgba(0, 0, 0, 0.85); overflow-y: auto;">
+        <div class="modal" style="max-width: 1100px; width: 95%; text-align: center; background: transparent; box-shadow: none; padding: 40px 20px; border: none; transform: translateY(0); margin-top: 5vh; position: relative;">
+            <button class="close-btn" onclick="closePlanModal()" style="color: white; top: 0; right: 20px; font-size: 32px; z-index: 100;">&times;</button>
+            <h2 style="font-size: 40px; font-weight: 800; margin-bottom: 16px; letter-spacing: -1px;">Upgrade to Pro</h2>
+            <p style="color: var(--text-secondary); margin-bottom: 48px; font-size: 18px;">
+                Choose the perfect plan to create high-quality AI videos.
+            </p>
+            <div class="paywall-container">
+                <!-- Starter Card -->
+                <div class="paywall-card">
+                    <div class="plan-name">Starter</div>
+                    <div class="plan-price">$19.99</div>
+                    <div class="plan-price-sub">/ mo</div>
+                    <ul class="plan-features">
+                        <li>300 Credits / month</li>
+                        <li>High Quality (1080p)</li>
+                        <li>No Watermark</li>
+                        <li>Priority Generation</li>
+                        <li>Commercial Use</li>
+                    </ul>
+                    <button class="btn-primary" style="background: transparent; border: 2px solid var(--border-color); color: var(--text-primary);" onclick="checkout('Starter')">Choose Starter</button>
+                </div>
+
+                <!-- Pro Card (Recommended) -->
+                <div class="paywall-card recommended">
+                    <div class="recommended-badge">Save 2 Months! / Most Popular</div>
+                    <div class="plan-name">Pro</div>
+                    <div class="plan-price">$199.99</div>
+                    <div class="plan-price-sub">/ yr - Save with Annual Plan</div>
+                    <ul class="plan-features">
+                        <li>500 Credits / month</li>
+                        <li>Best Quality (1080p/4K coming soon)</li>
+                        <li>No Watermark</li>
+                        <li>Fastest Generation</li>
+                        <li>Priority Support</li>
+                    </ul>
+                    <button class="btn-primary" style="background: var(--accent);" onclick="checkout('Pro')">Choose Pro</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Top-up Modal -->
+    <div class="modal-overlay" id="topupModalOverlay">
+        <div class="modal">
+            <button class="close-btn" onclick="closeTopupModal()">&times;</button>
+            <h2 class="modal-title">Out of Credits</h2>
+            <p style="text-align: center; color: var(--text-secondary); margin-bottom: 24px; font-size: 14px;">You have no credits left. Please purchase more credits or upgrade your plan.</p>
+            <button class="btn-primary" style="width: 100%; margin-bottom: 12px;" onclick="checkout('Top-up')">Add 100 Credits ($9.99)</button>
+            <button class="btn-text" style="width: 100%;" onclick="closeTopupModal(); openPlanModal();">View Subscription Plans</button>
+        </div>
+    </div>
+
+    <!-- Paywall Modal (Forced on Signup/Login) -->
+    <div class="modal-overlay" id="paywallModalOverlay" style="background: rgba(0, 0, 0, 0.95); z-index: 10000; overflow-y: auto;">
+        <div class="modal" style="max-width: 1100px; width: 95%; text-align: center; background: transparent; box-shadow: none; padding: 40px 20px; border: none; transform: translateY(0);">
+            
+            <h2 style="font-size: 40px; font-weight: 800; margin-bottom: 16px; letter-spacing: -1px;">Pricing Plans</h2>
+            <p style="color: var(--text-secondary); margin-bottom: 48px; font-size: 18px;">
+                Choose the perfect plan to create high-quality AI videos.
+            </p>
+            
+            <div class="paywall-container">
+                <!-- Free Card -->
+                <div class="paywall-card">
+                    <div class="plan-name">Free</div>
+                    <div class="plan-price">$0</div>
+                    <div class="plan-price-sub">Free Forever / 10 Credits Included</div>
+                    <ul class="plan-features">
+                        <li>10 Trial Credits (1 video)</li>
+                        <li>Standard Quality (720p)</li>
+                        <li>SnappVid Watermark</li>
+                        <li>Standard Generation Speed</li>
+                    </ul>
+                    <button class="btn-primary" style="background: transparent; border: 2px solid var(--border-color); color: var(--text-primary);" onclick="closePaywallModal()">Start for Free</button>
+                </div>
+
+                <!-- Starter Card (Recommended) -->
+                <div class="paywall-card recommended">
+                    <div class="recommended-badge">Most Popular</div>
+                    <div class="plan-name">Starter</div>
+                    <div class="plan-price">$19.99</div>
+                    <div class="plan-price-sub">/ mo</div>
+                    <ul class="plan-features">
+                        <li>300 Credits / month</li>
+                        <li>High Quality (1080p)</li>
+                        <li>No Watermark</li>
+                        <li>Priority Generation</li>
+                        <li>Commercial Use</li>
+                    </ul>
+                    <button class="btn-primary" style="background: var(--accent);" onclick="checkout('Starter')">Choose Starter</button>
+                </div>
+
+                <!-- Pro Card -->
+                <div class="paywall-card">
+                    <div class="plan-name">Pro</div>
+                    <div class="plan-price">$199.99</div>
+                    <div class="plan-price-sub">/ yr - Save with Annual Plan</div>
+                    <ul class="plan-features">
+                        <li>500 Credits / month</li>
+                        <li>Best Quality (1080p/4K coming soon)</li>
+                        <li>No Watermark</li>
+                        <li>Fastest Generation</li>
+                        <li>Priority Support</li>
+                    </ul>
+                    <button class="btn-primary" style="background: var(--text-primary); color: var(--bg-color);" onclick="checkout('Pro')">Choose Pro</button>
+                </div>
+            </div>
+            
+            <div style="margin-top: 32px; min-height: 24px;">
+                <button id="paywallSkipBtn" class="btn-text" style="font-size: 15px; color: var(--text-secondary); background: transparent;" disabled onclick="closePaywallModal()">
+                    You can skip in 5 seconds
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('generateForm');
+        const btnText = document.getElementById('btnText');
+        const spinner = document.getElementById('spinner');
+        const submitBtn = document.getElementById('submitBtn');
+        const resultArea = document.getElementById('resultArea');
+        const resultVideo = document.getElementById('resultVideo');
+        // const youtubeBtn = document.getElementById('youtubeBtn');
+        
+        const modalOverlay = document.getElementById('modalOverlay');
+        const planModalOverlay = document.getElementById('planModalOverlay');
+        const topupModalOverlay = document.getElementById('topupModalOverlay');
+        const modalTitle = document.getElementById('modalTitle');
+        const authForm = document.getElementById('authForm');
+        
+        let currentVideoUrl = "";
+        let currentEmail = null;
+        let currentCredits = 0;
+        
+        function updateCreditDisplay() {
+            const countSpan = document.getElementById('creditCount');
+            countSpan.textContent = currentCredits;
+            
+            const floatingBtn = document.getElementById('floatingUpgradeBtn');
+            const plusBtn = document.getElementById('headerPlusBtn');
+            
+            document.getElementById('creditDisplay').style.display = 'flex';
+            floatingBtn.classList.add('visible');
+            
+            if (currentCredits <= 20) {
+                countSpan.classList.add('credit-warning');
+                plusBtn.style.animation = 'flashWarning 1s infinite';
+                floatingBtn.style.animation = 'flashWarning 1s infinite';
+            } else {
+                countSpan.classList.remove('credit-warning');
+                plusBtn.style.animation = 'none';
+                floatingBtn.style.animation = 'none';
+            }
+        }
+
+        // Generate Video
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            if (!currentEmail) {
+                alert("Please login first to generate a video.");
+                openModal('Login');
+                return;
+            }
+
+            const theme = document.getElementById('theme').value;
+
+            btnText.textContent = 'Generating...';
+            spinner.style.display = 'block';
+            submitBtn.disabled = true;
+            resultArea.classList.add('hidden');
+            
+            try {
+                const response = await fetch('http://127.0.0.1:8000/generate-video', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ theme: theme, email: currentEmail })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json().catch(() => ({}));
+                    if (response.status === 403 && error.detail && error.detail.includes("Credit limit reached")) {
+                        openTopupModal();
+                        throw new Error("Credit limit reached.");
+                    }
+                    throw new Error(error.detail || 'API Error occurred.');
+                }
+
+                const data = await response.json();
+                
+                if (currentCredits >= 10) {
+                    currentCredits -= 10;
+                    updateCreditDisplay();
+                }
+                
+                currentVideoUrl = 'http://127.0.0.1:8000' + data.video_url;
+                resultVideo.src = currentVideoUrl;
+                resultArea.classList.remove('hidden');
+                
+                setTimeout(() => {
+                    resultArea.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }, 300);
+
+            } catch (err) {
+                alert(`Error: ${err.message}`);
+            } finally {
+                btnText.textContent = 'Generate';
+                spinner.style.display = 'none';
+                submitBtn.disabled = false;
+            }
+        });
+
+        // Post to YouTube (Feature Removed / Commented Out)
+        /*
+        youtubeBtn.addEventListener('click', async () => {
+            const originalText = youtubeBtn.innerHTML;
+            youtubeBtn.innerHTML = 'Posting...';
+            youtubeBtn.disabled = true;
+
+            try {
+                const response = await fetch('http://127.0.0.1:8000/upload-youtube', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ video_url: currentVideoUrl, title: document.getElementById('theme').value })
+                });
+
+                if (!response.ok) throw new Error('Failed to post to YouTube');
+                const data = await response.json();
+                
+                alert(data.message + "\nURL: " + data.youtube_url);
+                youtubeBtn.innerHTML = '✅ Posted Successfully';
+            } catch (err) {
+                alert(`Error: ${err.message}`);
+                youtubeBtn.innerHTML = originalText;
+                youtubeBtn.disabled = false;
+            }
+        });
+        */
+
+        function openModal(type) {
+            modalTitle.textContent = type;
+            if(type === 'Settings') {
+                authForm.style.display = 'none';
+                modalTitle.textContent = 'Settings (Coming Soon)';
+            } else {
+                authForm.style.display = 'block';
+            }
+            modalOverlay.classList.add('active');
+        }
+
+        function closeModal() {
+            modalOverlay.classList.remove('active');
+        }
+        
+        function openPlanModal() {
+            planModalOverlay.classList.add('active');
+        }
+        
+        function closePlanModal() {
+            planModalOverlay.classList.remove('active');
+        }
+        
+        function openTopupModal() {
+            topupModalOverlay.classList.add('active');
+        }
+        
+        function closeTopupModal() {
+            topupModalOverlay.classList.remove('active');
+        }
+
+        const paywallModalOverlay = document.getElementById('paywallModalOverlay');
+        const paywallSkipBtn = document.getElementById('paywallSkipBtn');
+        let paywallTimer;
+
+        function openPaywallModal() {
+            paywallModalOverlay.classList.add('active');
+            paywallSkipBtn.disabled = true;
+            paywallSkipBtn.style.opacity = '0.5';
+            paywallSkipBtn.textContent = 'You can skip in 5 seconds';
+            
+            let timeLeft = 5;
+            clearInterval(paywallTimer);
+            paywallTimer = setInterval(() => {
+                timeLeft--;
+                if (timeLeft > 0) {
+                    paywallSkipBtn.textContent = `You can skip in ${timeLeft} seconds`;
+                } else {
+                    clearInterval(paywallTimer);
+                    paywallSkipBtn.disabled = false;
+                    paywallSkipBtn.style.opacity = '1';
+                    paywallSkipBtn.textContent = 'Try for Free (10 Credits Left)';
+                }
+            }, 1000);
+        }
+
+        function closePaywallModal() {
+            clearInterval(paywallTimer);
+            paywallModalOverlay.classList.remove('active');
+        }
+
+        authForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const type = modalTitle.textContent;
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            
+            const submitBtn = authForm.querySelector('button[type="submit"]');
+            const originalText = submitBtn.innerHTML;
+            submitBtn.innerHTML = 'Processing...';
+            submitBtn.disabled = true;
+            
+            const endpoint = type === 'Sign Up' ? '/signup' : '/login';
+            
+            try {
+                const formData = new FormData();
+                formData.append('email', email);
+                formData.append('password', password);
+
+                const response = await fetch(`http://127.0.0.1:8000${endpoint}`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.detail);
+                
+                currentEmail = email;
+                currentCredits = data.credits || 0;
+                
+                const loginBtn = document.getElementById('headerLoginBtn');
+                loginBtn.textContent = email; // ログイン中の表示に変更
+                document.getElementById('headerSignupBtn').style.display = 'none'; // Sign Upを隠す
+                
+                // クレジット表示をアクティブに
+                updateCreditDisplay();
+                
+                closeModal();
+                
+                if (data.plan_status === 'Free') {
+                    openPaywallModal();
+                } else {
+                    alert(`${data.message}`);
+                }
+            } catch (err) {
+                alert(`Error: ${err.message}`);
+            } finally {
+                submitBtn.innerHTML = originalText;
+                submitBtn.disabled = false;
+            }
+        });
+
+        // Stripe 決済処理
+        async function checkout(planType) {
+            if (!currentEmail) {
+                alert("Please login first.");
+                openModal("Login");
+                return;
+            }
+            try {
+                const formData = new FormData();
+                formData.append('email', currentEmail);
+                formData.append('plan_type', planType);
+                
+                const response = await fetch('http://127.0.0.1:8000/create-checkout-session', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) throw new Error('Failed to create checkout session');
+                const data = await response.json();
+                
+                // Stripe Checkout ページへリダイレクト
+                window.location.href = data.checkout_url;
+            } catch (err) {
+                alert(`Checkout Error: ${err.message}`);
+            }
+        }
+    </script>
+</body>
+</html>
