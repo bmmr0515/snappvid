@@ -579,20 +579,13 @@
         <div class="modal">
             <button class="close-btn" onclick="closeModal()">&times;</button>
             <h2 id="modalTitle">Sign Up</h2>
-            <form id="authForm">
-                <div class="form-group">
-                    <input type="email" id="email" placeholder="Email Address" required>
-                </div>
-                <div class="form-group">
-                    <input type="password" id="password" placeholder="Password" required>
-                </div>
-                <button type="submit" class="modal-btn" id="authSubmitBtn">Continue</button>
-                <div style="margin-top: 16px; text-align: center; color: var(--text-secondary); font-size: 14px;">or</div>
-                <button type="button" class="modal-btn" style="background: #ffffff; color: #000000; margin-top: 16px; display: flex; align-items: center; justify-content: center; gap: 8px;" onclick="window.location.href='/auth/google/login'">
+            <div id="authForm" style="text-align: center;">
+                <p style="color: var(--text-secondary); margin-bottom: 24px;">Please sign in to continue.</p>
+                <button type="button" class="modal-btn" style="background: #ffffff; color: #000000; width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;" onclick="window.location.href='/auth/google/login'">
                     <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" style="width: 18px; height: 18px;">
                     Continue with Google
                 </button>
-            </form>
+            </div>
         </div>
     </div>
 
@@ -938,56 +931,7 @@
             paywallModalOverlay.classList.remove('active');
         }
 
-        authForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const type = modalTitle.textContent;
-            const email = document.getElementById('email').value;
-            const password = document.getElementById('password').value;
-            
-            const submitBtn = authForm.querySelector('button[type="submit"]');
-            const originalText = submitBtn.innerHTML;
-            submitBtn.innerHTML = 'Processing...';
-            submitBtn.disabled = true;
-            
-            const endpoint = type === 'Sign Up' ? '/signup' : '/login';
-            
-            try {
-                const formData = new FormData();
-                formData.append('email', email);
-                formData.append('password', password);
 
-                const response = await fetch(`http://127.0.0.1:8000${endpoint}`, {
-                    method: 'POST',
-                    body: formData
-                });
-
-                const data = await response.json();
-                if (!response.ok) throw new Error(data.detail);
-                
-                currentEmail = email;
-                currentCredits = data.credits || 0;
-                
-                const loginBtn = document.getElementById('headerLoginBtn');
-                loginBtn.textContent = email; // ログイン中の表示に変更
-                document.getElementById('headerSignupBtn').style.display = 'none'; // Sign Upを隠す
-                
-                // クレジット表示をアクティブに
-                updateCreditDisplay();
-                
-                closeModal();
-                
-                if (data.plan_status === 'Free') {
-                    openPaywallModal();
-                } else {
-                    alert(`${data.message}`);
-                }
-            } catch (err) {
-                alert(`Error: ${err.message}`);
-            } finally {
-                submitBtn.innerHTML = originalText;
-                submitBtn.disabled = false;
-            }
-        });
 
         // Stripe Pricing Table handles checkout now.
     </script>

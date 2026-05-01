@@ -34,7 +34,7 @@ if platform.system() == "Darwin":
     os.environ["MAGICK_TEMPORARY_PATH"] = tempfile.gettempdir()
 
 import stripe
-import bcrypt
+
 
 # .envファイルから環境変数を読み込む
 load_dotenv()
@@ -192,13 +192,7 @@ if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
         }
     )
 
-def hash_password(password: str) -> str:
-    salt = bcrypt.gensalt()
-    hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
-    return hashed.decode('utf-8')
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
 
 # ==== Models ====
 class VideoRequest(BaseModel):
@@ -227,71 +221,7 @@ class AuthResponse(BaseModel):
     plan_status: Optional[str] = None
     credits: Optional[int] = None
 
-# ==== Auth Endpoints ====
-@app.post("/signup", response_model=AuthResponse)
-@limiter.limit("3/hour") # SPA M PREVENTION: Strictly limit traditional signups
-def signup(request: Request, email: str = Form(...), password: str = Form(...)):
-    if not is_valid_email(email):
-        raise HTTPException(status_code=400, detail="Invalid email format.")
-        
-    domain = email.split('@')[-1].lower()
-    if domain in DISPOSABLE_DOMAINS:
-        raise HTTPException(status_code=400, detail="Disposable email addresses are not allowed.")
-        
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    
-    # Check if email exists
-    cursor.execute("SELECT id FROM users WHERE email = ?", (email,))
-    if cursor.fetchone():
-        conn.close()
-        raise HTTPException(status_code=400, detail="Email already registered")
-        
-    user_id = str(uuid.uuid4())
-    password_hash = hash_password(password)
-    
-    try:
-        cursor.execute(
-            "INSERT INTO users (id, email, password_hash, plan_status, credits) VALUES (?, ?, ?, ?, ?)",
-            (user_id, email, password_hash, "Free", 10)
-        )
-        conn.commit()
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        conn.close()
-        
-    return AuthResponse(
-        status="success", 
-        message="Registration successful.", 
-        user_id=user_id, 
-        email=email, 
-        plan_status="Free",
-        credits=10
-    )
 
-@app.post("/login", response_model=AuthResponse)
-@limiter.limit("10/minute")
-def login(request: Request, email: str = Form(...), password: str = Form(...)):
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT id, email, password_hash, plan_status, credits FROM users WHERE email = ?", (email,))
-    user = cursor.fetchone()
-    conn.close()
-    
-    if not user or not verify_password(password, user[2]):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-        
-    return AuthResponse(
-        status="success", 
-        message="Login successful", 
-        user_id=user[0], 
-        email=user[1], 
-        plan_status=user[3],
-        credits=user[4]
-    )
 
 @app.get('/auth/google/login')
 async def google_login(request: Request):
@@ -325,11 +255,10 @@ async def google_callback(request: Request):
     if not user:
         # Create new user
         user_id = str(uuid.uuid4())
-        # Provide a dummy password hash since they use OAuth
-        dummy_hash = hash_password(str(uuid.uuid4()))
+        # Provide an empty string since they use OAuth
         cursor.execute(
             "INSERT INTO users (id, email, password_hash, plan_status, credits, is_verified) VALUES (?, ?, ?, ?, ?, ?)",
-            (user_id, email, dummy_hash, "Free", 10, 1) # Auto-verified since it's Google
+            (user_id, email, "", "Free", 10, 1) # Auto-verified since it's Google
         )
         conn.commit()
         credits = 10
