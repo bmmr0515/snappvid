@@ -3,9 +3,7 @@ import uuid
 import sqlite3
 import time
 import glob
-from typing import Optional
-
-from fastapi import FastAPI, HTTPException, Form, Depends, Request
+from fastapi import FastAPI, HTTPException, Form, Depends, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, RedirectResponse
@@ -76,6 +74,9 @@ async def serve_index():
 # セキュリティ設定
 DISPOSABLE_DOMAINS = {"mailinator.com", "tempmail.com", "10minutemail.com", "yopmail.com", "guerrillamail.com", "throwawaymail.com", "temp-mail.org", "trashmail.com", "getnada.com"}
 active_generation_users = set()
+
+# ジョブ状態のトラッキング用
+job_status = {}
 
 def sanitize_theme(theme: str) -> str:
     sanitized = theme.replace('\n', ' ').replace('\r', '')
@@ -209,9 +210,14 @@ class VideoResponse(BaseModel):
     message: str
     job_id: str
     theme: str
-    script: str
-    video_url: str
-    local_path: str
+    
+class VideoStatusResponse(BaseModel):
+    status: str
+    progress: int
+    message: str
+    video_url: Optional[str] = None
+    script: Optional[str] = None
+    local_path: Optional[str] = None
 
 class AuthResponse(BaseModel):
     status: str
@@ -224,7 +230,7 @@ class AuthResponse(BaseModel):
 # ==== Auth Endpoints ====
 @app.post("/signup", response_model=AuthResponse)
 @limiter.limit("3/hour") # SPA M PREVENTION: Strictly limit traditional signups
-async def signup(request: Request, email: str = Form(...), password: str = Form(...)):
+def signup(request: Request, email: str = Form(...), password: str = Form(...)):
     if not is_valid_email(email):
         raise HTTPException(status_code=400, detail="Invalid email format.")
         
@@ -267,7 +273,7 @@ async def signup(request: Request, email: str = Form(...), password: str = Form(
 
 @app.post("/login", response_model=AuthResponse)
 @limiter.limit("10/minute")
-async def login(request: Request, email: str = Form(...), password: str = Form(...)):
+def login(request: Request, email: str = Form(...), password: str = Form(...)):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     
@@ -424,31 +430,60 @@ async def generate_video(request: Request, body: VideoRequest):
         raise HTTPException(status_code=401, detail="User not found. Please login.")
         
     user_id, plan_status, credits = user[0], user[1], user[2]
-    is_special_trial = False
-    
-    if credits < 10:
-        # moriretsu06@gmail.com の場合、特別に許可する
-        if email == "moriretsu06@gmail.com":
-            is_special_trial = True
-            print(f"Special Pro Trial granted for {email}")
-        else:
-            conn.close()
-            raise HTTPException(status_code=403, detail="Credit limit reached. Please purchase more credits or upgrade your plan.")
-    else:
-        # ==== 仮押さえ処理 ====
-        cursor.execute("UPDATE users SET credits = credits - 10 WHERE email = ? AND credits >= 10", (email,))
-        if cursor.rowcount == 0:
-            conn.close()
-            raise HTTPException(status_code=403, detail="Credit limit reached or parallel generation detected.")
-        conn.commit()
-    
+    is_special_trial = (email == "moriretsu06@gmail.com")
+
+    # ==== 仮押さえ処理 ====
+    cursor.execute("UPDATE users SET credits = credits - 10 WHERE email = ? AND credits >= 10", (email,))
+    if cursor.rowcount == 0:
+        conn.close()
+        raise HTTPException(status_code=403, detail="Credit limit reached or parallel generation detected.")
+    conn.commit()
     conn.close()
     
     is_pro = (plan_status == "Pro") or is_special_trial
-
     active_generation_users.add(email)
+    
+    job_id = str(uuid.uuid4())
+    job_status[job_id] = {
+        "status": "processing",
+        "progress": 0,
+        "message": "Initializing...",
+        "video_url": None,
+        "script": None,
+        "local_path": None,
+        "error": None
+    }
+    
+    # ==== バックグラウンドタスクの登録 ====
+    background_tasks.add_task(process_video_background, job_id, theme, email, user_id, is_pro)
+
+    return VideoResponse(
+        status="success",
+        message="Video generation started in background.",
+        job_id=job_id,
+        theme=theme
+    )
+
+@app.get("/generation-status/{job_id}", response_model=VideoStatusResponse)
+async def get_generation_status(job_id: str):
+    if job_id not in job_status:
+        raise HTTPException(status_code=404, detail="Job ID not found.")
+        
+    status_data = job_status[job_id]
+    if status_data["status"] == "error":
+        raise HTTPException(status_code=500, detail=status_data.get("error", "Unknown error occurred."))
+        
+    return VideoStatusResponse(
+        status=status_data["status"],
+        progress=status_data["progress"],
+        message=status_data["message"],
+        video_url=status_data["video_url"],
+        script=status_data["script"],
+        local_path=status_data["local_path"]
+    )
+
+def process_video_background(job_id: str, theme: str, email: str, user_id: str, is_pro: bool):
     try:
-        job_id = str(uuid.uuid4())
         timestamp = int(time.time())
         video_filename = f"video_{user_id}_{timestamp}.mp4"
         
@@ -457,6 +492,8 @@ async def generate_video(request: Request, body: VideoRequest):
         output_mp4_path = os.path.join("output", video_filename)
 
         # 1. 台本生成: OpenAI API (GPT-4o)
+        job_status[job_id]["progress"] = 10
+        job_status[job_id]["message"] = "Generating script..."
         print(f"[{job_id}] Generating script for theme: {theme}")
         
         system_prompt = "あなたはTikTok/Shorts向けの短尺動画の台本ライターです。"
@@ -475,9 +512,12 @@ async def generate_video(request: Request, body: VideoRequest):
             ]
         )
         script = response.choices[0].message.content
+        job_status[job_id]["script"] = script
         print(f"[{job_id}] Script generated:\n{script}\n")
 
         # 2. 音声生成: ElevenLabs API (REST API)
+        job_status[job_id]["progress"] = 30
+        job_status[job_id]["message"] = "Generating voice..."
         print(f"[{job_id}] Generating audio...")
         
         voice_id = "pNInz6obpgDQGcFmaJgB" # Adam
@@ -509,10 +549,8 @@ async def generate_video(request: Request, body: VideoRequest):
         print(f"[{job_id}] Audio saved to {audio_path}")
 
         # 3. 背景画像の生成とダウンロード: DALL-E 3
-        # 【コスト削減提案】
-        # APIコストを無料に近づける場合、DALL-Eの代わりに Unsplash API などを利用して
-        # theme に関連するフリー画像を取得する仕組みに変更することを推奨します。
-        # 例: requests.get(f"https://api.unsplash.com/photos/random?query={theme}&client_id=YOUR_KEY")
+        job_status[job_id]["progress"] = 50
+        job_status[job_id]["message"] = "Generating background image..."
         print(f"[{job_id}] Generating background image via DALL-E 3...")
         
         image_response = openai_client.images.generate(
@@ -527,12 +565,14 @@ async def generate_video(request: Request, body: VideoRequest):
         with open(bg_image_path, "wb") as f:
             f.write(img_data)
         
+        job_status[job_id]["progress"] = 70
+        job_status[job_id]["message"] = "Synthesizing video..."
+        
         # 4. 字幕(テロップ)の分割と合成
         raw_phrases = [p.strip() for p in re.split(r'(?<=[.!?]) +', script) if p.strip()]
         if not raw_phrases:
             raw_phrases = [script]
             
-        # UI被りや長すぎる文章を避けるため、1フレーズ最大7単語程度に細かく分割
         phrases = []
         for rp in raw_phrases:
             words = rp.split()
@@ -541,69 +581,35 @@ async def generate_video(request: Request, body: VideoRequest):
             
         audio_clip = AudioFileClip(audio_path)
         duration = audio_clip.duration
-        
-        # 空白を除外した純粋な文字数で比率を計算し、音声との完璧な同期を目指す
         total_chars = sum(len(p.replace(" ", "")) for p in phrases)
         text_clips = []
         current_time = 0
         
-        # Mac環境で確実に存在するフォントファイルのフルパスを探す
-        font_candidates = [
-            "/System/Library/Fonts/Supplemental/Arial.ttf",
-            "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-            "/System/Library/Fonts/Helvetica.ttc",
-            "/System/Library/Fonts/Times.ttc"
-        ]
-        selected_font = "Arial" # 最終フォールバック
-        for fp in font_candidates:
-            if os.path.exists(fp):
-                selected_font = fp
-                break
+        selected_font = "/System/Library/Fonts/Supplemental/Arial.ttf"
         
-        print(f"[{job_id}] Preparing subtitles using font: {selected_font}")
         for phrase in phrases:
             char_count = len(phrase.replace(" ", ""))
-            phrase_duration = (char_count / total_chars) * duration
+            phrase_duration = (char_count / total_chars) * duration if total_chars > 0 else duration / len(phrases)
             
-            # 絶対パスでフォントを指定して確実に読み込ませる
             txt_clip = TextClip(
-                phrase, 
-                fontsize=70, 
-                color='white', 
-                stroke_color='black', 
-                stroke_width=2,
-                method='caption',
-                size=(900, None),
-                align='center',
-                font=selected_font
+                phrase, fontsize=70, color='white', stroke_color='black', stroke_width=2,
+                method='caption', size=(900, None), align='center', font=selected_font
             )
-            
-            # 半透明の黒背景ボックスを生成して視認性を高める
             w, h = txt_clip.size
             bg_box = ColorClip(size=(w + 60, h + 40), color=(0,0,0)).set_opacity(0.6)
-            
-            # 画面下部から25〜30%ほど上げた位置(y=1250付近)に配置し、TikTok/ShortsのUI被りを回避
             bg_box = bg_box.set_position(('center', 1250 - 20)).set_start(current_time).set_duration(phrase_duration)
             txt_clip = txt_clip.set_position(('center', 1250)).set_start(current_time).set_duration(phrase_duration)
-            
             text_clips.extend([bg_box, txt_clip])
             current_time += phrase_duration
             
-        # ウォーターマーク (無料版のみ追加、Pro版や特別試用版では非表示)
         if not is_pro:
             wm_clip = TextClip(
-                "Powered by SnappVid", 
-                fontsize=40, 
-                color='white', 
-                font=selected_font
+                "Powered by SnappVid", fontsize=40, color='white', font=selected_font
             ).set_position(('center', 1600)).set_duration(duration).set_opacity(0.4)
             text_clips.append(wm_clip)
-            
-        # 5. 動画合成: MoviePy
-        print(f"[{job_id}] Synthesizing final video...")
         
+        # 背景画像の設定とズームアニメーション
         bg_clip = ImageClip(bg_image_path).set_duration(duration)
-        
         # Ken Burns 効果（ゆっくりズームイン）
         # Pro版の場合はよりダイナミックにズーム
         zoom_factor = 0.15 if is_pro else 0.08
@@ -648,15 +654,11 @@ async def generate_video(request: Request, body: VideoRequest):
             conn.close()
         # 通常ユーザーは開始時に仮押さえ済みのため、成功時は何もしない
 
-        return VideoResponse(
-            status="success",
-            message="Video generated successfully.",
-            job_id=job_id,
-            theme=theme,
-            script=script,
-            video_url=f"/files/{video_filename}",
-            local_path=output_mp4_path
-        )
+        job_status[job_id]["progress"] = 100
+        job_status[job_id]["message"] = "Completed!"
+        job_status[job_id]["status"] = "completed"
+        job_status[job_id]["video_url"] = f"http://127.0.0.1:8000/files/{video_filename}"
+        job_status[job_id]["local_path"] = output_mp4_path
 
     except Exception as e:
         job_id_safe = job_id if 'job_id' in locals() else 'unknown'
@@ -674,11 +676,8 @@ async def generate_video(request: Request, body: VideoRequest):
             except Exception as refund_err:
                 print(f"Failed to refund credits: {refund_err}")
                 
-        try:
-            conn.close()
-        except:
-            pass
-        raise HTTPException(status_code=500, detail=str(e))
+        job_status[job_id]["status"] = "error"
+        job_status[job_id]["error"] = str(e)
     finally:
         active_generation_users.discard(email)
 
