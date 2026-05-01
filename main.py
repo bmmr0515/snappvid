@@ -269,7 +269,9 @@ async def login(request: Request, email: str = Form(...), password: str = Form(.
 # ==== Stripe Endpoints ====
 @app.post("/create-checkout-session")
 async def create_checkout_session(email: str = Form(...), plan_type: str = Form(...)):
+    print(f"=== Starting checkout session for {email}, plan: {plan_type} ===")
     if not stripe.api_key:
+        print("=== Checkout Error: Stripe API key is NOT configured in environment ===")
         raise HTTPException(status_code=500, detail="Stripe API key not configured")
         
     price_id = None
@@ -280,10 +282,14 @@ async def create_checkout_session(email: str = Form(...), plan_type: str = Form(
     elif plan_type == "Top-up":
         price_id = STRIPE_PRICE_ID_TOPUP
     else:
+        print(f"=== Checkout Error: Invalid plan type received: {plan_type} ===")
         raise HTTPException(status_code=400, detail="Invalid plan type")
         
     if not price_id:
+        print(f"=== Checkout Error: STRIPE_PRICE_ID for {plan_type} is None or empty in environment ===")
         raise HTTPException(status_code=500, detail=f"Price ID for {plan_type} is not configured.")
+
+    print(f"Using Price ID: {price_id}")
 
     try:
         session = stripe.checkout.Session.create(
