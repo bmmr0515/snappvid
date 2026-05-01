@@ -303,8 +303,21 @@ async def create_checkout_session(email: str = Form(...), plan_type: str = Form(
             }
         )
         return {"checkout_url": session.url}
+    except stripe.error.StripeError as e:
+        import traceback
+        print("=== Stripe API Error ===")
+        print(f"HTTP Status: {e.http_status}")
+        print(f"Code: {e.code}")
+        print(f"Param: {e.param}")
+        print(f"Message: {e.user_message}")
+        print("Full Traceback:")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Stripe Error: {e.user_message or str(e)}")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        print("=== Unexpected Checkout Error ===")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
 @app.post("/webhook")
 async def stripe_webhook(request: Request):
