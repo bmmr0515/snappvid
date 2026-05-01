@@ -549,6 +549,17 @@
             </button>
         </form>
 
+        <!-- Progress Bar UI -->
+        <div id="progressContainer" style="display: none; width: 100%; max-width: 600px; margin: 20px auto; text-align: left;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 14px; color: var(--text-secondary);">
+                <span id="progressMessage">Starting...</span>
+                <span id="progressPercent">0%</span>
+            </div>
+            <div style="width: 100%; height: 8px; background-color: #333; border-radius: 4px; overflow: hidden;">
+                <div id="progressBar" style="width: 0%; height: 100%; background: linear-gradient(90deg, var(--accent), #ff8a00); transition: width 0.4s ease;"></div>
+            </div>
+        </div>
+
         <div id="resultArea" class="result-area hidden">
             <div class="video-wrapper">
                 <video id="resultVideo" controls playsinline></video>
@@ -708,12 +719,27 @@
 
             const theme = document.getElementById('theme').value;
 
-            btnText.textContent = 'Generating...';
+            btnText.textContent = 'Initializing...';
             spinner.style.display = 'block';
             submitBtn.disabled = true;
             resultArea.classList.add('hidden');
             
+            // UI elements for progress
+            const progressContainer = document.getElementById('progressContainer');
+            const progressMessage = document.getElementById('progressMessage');
+            const progressPercent = document.getElementById('progressPercent');
+            const progressBar = document.getElementById('progressBar');
+            
+            progressContainer.style.display = 'block';
+            progressBar.style.width = '0%';
+            progressPercent.textContent = '0%';
+            progressMessage.textContent = 'Starting...';
+            
+            let jobId = null;
+            let pollingInterval = null;
+            
             try {
+                // 1. Start generation (Background)
                 const response = await fetch('http://127.0.0.1:8000/generate-video', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -730,26 +756,68 @@
                 }
 
                 const data = await response.json();
+                jobId = data.job_id;
                 
+                // Deduct credits visually immediately after accepting
                 if (currentCredits >= 10) {
                     currentCredits -= 10;
                     updateCreditDisplay();
                 }
                 
-                currentVideoUrl = 'http://127.0.0.1:8000' + data.video_url;
-                resultVideo.src = currentVideoUrl;
-                resultArea.classList.remove('hidden');
-                
-                setTimeout(() => {
-                    resultArea.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                }, 300);
+                // 2. Poll for status
+                pollingInterval = setInterval(async () => {
+                    try {
+                        const statusRes = await fetch(`http://127.0.0.1:8000/generation-status/${jobId}`);
+                        if (!statusRes.ok) {
+                            throw new Error('Failed to get status.');
+                        }
+                        const statusData = await statusRes.json();
+                        
+                        // Update UI
+                        const prog = statusData.progress;
+                        progressBar.style.width = `${prog}%`;
+                        progressPercent.textContent = `${prog}%`;
+                        progressMessage.textContent = statusData.message;
+                        btnText.textContent = `Generating... ${prog}%`;
+                        
+                        if (statusData.status === "completed") {
+                            clearInterval(pollingInterval);
+                            
+                            // Done
+                            currentVideoUrl = statusData.video_url;
+                            resultVideo.src = currentVideoUrl;
+                            resultArea.classList.remove('hidden');
+                            
+                            btnText.textContent = 'Generate';
+                            spinner.style.display = 'none';
+                            submitBtn.disabled = false;
+                            
+                            setTimeout(() => {
+                                resultArea.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            }, 300);
+                        } else if (statusData.status === "error") {
+                            clearInterval(pollingInterval);
+                            throw new Error(statusData.error || "Generation failed.");
+                        }
+                    } catch (pollErr) {
+                        clearInterval(pollingInterval);
+                        alert(`Error: ${pollErr.message}`);
+                        resetUI();
+                    }
+                }, 2000); // Poll every 2 seconds
 
             } catch (err) {
                 alert(`Error: ${err.message}`);
-            } finally {
+                resetUI();
+            }
+            
+            function resetUI() {
                 btnText.textContent = 'Generate';
                 spinner.style.display = 'none';
                 submitBtn.disabled = false;
+                progressContainer.style.display = 'none';
+                // Note: If an error happened after deduct, we should ideally fetch the current credits from a /me endpoint, 
+                // but for now the user can just refresh if credits were refunded on the backend.
             }
         });
 
