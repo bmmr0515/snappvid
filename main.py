@@ -267,64 +267,6 @@ async def login(request: Request, email: str = Form(...), password: str = Form(.
     )
 
 # ==== Stripe Endpoints ====
-@app.post("/create-checkout-session")
-async def create_checkout_session(email: str = Form(...), plan_type: str = Form(...)):
-    print(f"=== Starting checkout session for {email}, plan: {plan_type} ===")
-    if not stripe.api_key:
-        print("=== Checkout Error: Stripe API key is NOT configured in environment ===")
-        raise HTTPException(status_code=500, detail="Stripe API key not configured")
-        
-    price_id = None
-    if plan_type == "Starter":
-        price_id = STRIPE_PRICE_ID_STARTER
-    elif plan_type == "Pro":
-        price_id = STRIPE_PRICE_ID_PRO_ANNUAL
-    elif plan_type == "Top-up":
-        price_id = STRIPE_PRICE_ID_TOPUP
-    else:
-        print(f"=== Checkout Error: Invalid plan type received: {plan_type} ===")
-        raise HTTPException(status_code=400, detail="Invalid plan type")
-        
-    if not price_id:
-        print(f"=== Checkout Error: STRIPE_PRICE_ID for {plan_type} is None or empty in environment ===")
-        raise HTTPException(status_code=500, detail=f"Price ID for {plan_type} is not configured.")
-
-    print(f"Using Price ID: {price_id}")
-
-    try:
-        session = stripe.checkout.Session.create(
-            payment_method_types=['card'],
-            line_items=[{
-                'price': price_id,
-                'quantity': 1,
-            }],
-            mode='payment' if plan_type == "Top-up" else 'subscription',
-            success_url='http://localhost:8000/success?session_id={CHECKOUT_SESSION_ID}',
-            cancel_url='http://localhost:8000/cancel',
-            customer_email=email,
-            client_reference_id=email, # DB更新のキーとしてemailを使用
-            metadata={
-                "type": plan_type,
-                "user_id": email
-            }
-        )
-        return {"checkout_url": session.url}
-    except stripe.error.StripeError as e:
-        import traceback
-        print("=== Stripe API Error ===")
-        print(f"HTTP Status: {e.http_status}")
-        print(f"Code: {e.code}")
-        print(f"Param: {e.param}")
-        print(f"Message: {e.user_message}")
-        print("Full Traceback:")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Stripe Error: {e.user_message or str(e)}")
-    except Exception as e:
-        import traceback
-        print("=== Unexpected Checkout Error ===")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
-
 @app.post("/webhook")
 async def stripe_webhook(request: Request):
     payload = await request.body()
@@ -345,9 +287,24 @@ async def stripe_webhook(request: Request):
     # 決済成功時の処理
     if event['type'] == 'checkout.session.completed':
         session = event['data']['object']
-        metadata = session.get('metadata', {})
-        plan_type = metadata.get('type')
-        email = session.get('client_reference_id') or metadata.get('user_id')
+        email = session.get('client_reference_id')
+        amount_total = session.get('amount_total', 0)
+        
+        plan_type = None
+        if amount_total == 1999:
+            plan_type = "Starter"
+        elif amount_total == 19999:
+            plan_type = "Pro"
+        elif amount_total == 999:
+            plan_type = "Top-up"
+        else:
+            # Fallback based on metadata if any
+            metadata = session.get('metadata', {})
+            plan_type = metadata.get('type')
+            if not email:
+                email = metadata.get('user_id')
+        
+        print(f"Webhook received: email={email}, amount_total={amount_total}, deduced plan={plan_type}")
         
         if email and plan_type:
             conn = sqlite3.connect(DB_FILE)
@@ -363,6 +320,8 @@ async def stripe_webhook(request: Request):
             conn.commit()
             conn.close()
             print(f"User {email} updated for plan: {plan_type}.")
+        else:
+            print(f"Failed to update user. email or plan_type is missing.")
 
     return {"status": "success"}
 

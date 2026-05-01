@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SnappVid - AI Video Generator</title>
+    <script async src="https://js.stripe.com/v3/pricing-table.js"></script>
     <style>
         /* Apple-like Dark Mode Styles */
         :root {
@@ -587,37 +588,8 @@
             <p style="color: var(--text-secondary); margin-bottom: 48px; font-size: 18px;">
                 Choose the perfect plan to create high-quality AI videos.
             </p>
-            <div class="paywall-container">
-                <!-- Starter Card -->
-                <div class="paywall-card">
-                    <div class="plan-name">Starter</div>
-                    <div class="plan-price">$19.99</div>
-                    <div class="plan-price-sub">/ mo</div>
-                    <ul class="plan-features">
-                        <li>300 Credits / month</li>
-                        <li>High Quality (1080p)</li>
-                        <li>No Watermark</li>
-                        <li>Priority Generation</li>
-                        <li>Commercial Use</li>
-                    </ul>
-                    <button class="btn-primary" style="background: transparent; border: 2px solid var(--border-color); color: var(--text-primary);" onclick="checkout('Starter')">Choose Starter</button>
-                </div>
-
-                <!-- Pro Card (Recommended) -->
-                <div class="paywall-card recommended">
-                    <div class="recommended-badge">Save 2 Months! / Most Popular</div>
-                    <div class="plan-name">Pro</div>
-                    <div class="plan-price">$199.99</div>
-                    <div class="plan-price-sub">/ yr - Save with Annual Plan</div>
-                    <ul class="plan-features">
-                        <li>500 Credits / month</li>
-                        <li>Best Quality (1080p/4K coming soon)</li>
-                        <li>No Watermark</li>
-                        <li>Fastest Generation</li>
-                        <li>Priority Support</li>
-                    </ul>
-                    <button class="btn-primary" style="background: var(--accent);" onclick="checkout('Pro')">Choose Pro</button>
-                </div>
+            <div class="paywall-container" id="stripe-pricing-container-plan" style="display: block; width: 100%; max-width: 1000px; margin: 0 auto;">
+                <!-- Stripe Pricing Table will be injected here -->
             </div>
         </div>
     </div>
@@ -628,8 +600,7 @@
             <button class="close-btn" onclick="closeTopupModal()">&times;</button>
             <h2 class="modal-title">Out of Credits</h2>
             <p style="text-align: center; color: var(--text-secondary); margin-bottom: 24px; font-size: 14px;">You have no credits left. Please purchase more credits or upgrade your plan.</p>
-            <button class="btn-primary" style="width: 100%; margin-bottom: 12px;" onclick="checkout('Top-up')">Add 100 Credits ($9.99)</button>
-            <button class="btn-text" style="width: 100%;" onclick="closeTopupModal(); openPlanModal();">View Subscription Plans</button>
+            <button class="btn-primary" style="width: 100%; margin-bottom: 12px;" onclick="closeTopupModal(); openPlanModal();">View Subscription Plans</button>
         </div>
     </div>
 
@@ -642,51 +613,8 @@
                 Choose the perfect plan to create high-quality AI videos.
             </p>
             
-            <div class="paywall-container">
-                <!-- Free Card -->
-                <div class="paywall-card">
-                    <div class="plan-name">Free</div>
-                    <div class="plan-price">$0</div>
-                    <div class="plan-price-sub">Free Forever / 10 Credits Included</div>
-                    <ul class="plan-features">
-                        <li>10 Trial Credits (1 video)</li>
-                        <li>Standard Quality (720p)</li>
-                        <li>SnappVid Watermark</li>
-                        <li>Standard Generation Speed</li>
-                    </ul>
-                    <button class="btn-primary" style="background: transparent; border: 2px solid var(--border-color); color: var(--text-primary);" onclick="closePaywallModal()">Start for Free</button>
-                </div>
-
-                <!-- Starter Card (Recommended) -->
-                <div class="paywall-card recommended">
-                    <div class="recommended-badge">Most Popular</div>
-                    <div class="plan-name">Starter</div>
-                    <div class="plan-price">$19.99</div>
-                    <div class="plan-price-sub">/ mo</div>
-                    <ul class="plan-features">
-                        <li>300 Credits / month</li>
-                        <li>High Quality (1080p)</li>
-                        <li>No Watermark</li>
-                        <li>Priority Generation</li>
-                        <li>Commercial Use</li>
-                    </ul>
-                    <button class="btn-primary" style="background: var(--accent);" onclick="checkout('Starter')">Choose Starter</button>
-                </div>
-
-                <!-- Pro Card -->
-                <div class="paywall-card">
-                    <div class="plan-name">Pro</div>
-                    <div class="plan-price">$199.99</div>
-                    <div class="plan-price-sub">/ yr - Save with Annual Plan</div>
-                    <ul class="plan-features">
-                        <li>500 Credits / month</li>
-                        <li>Best Quality (1080p/4K coming soon)</li>
-                        <li>No Watermark</li>
-                        <li>Fastest Generation</li>
-                        <li>Priority Support</li>
-                    </ul>
-                    <button class="btn-primary" style="background: var(--text-primary); color: var(--bg-color);" onclick="checkout('Pro')">Choose Pro</button>
-                </div>
+            <div class="paywall-container" id="stripe-pricing-container-paywall" style="display: block; width: 100%; max-width: 1000px; margin: 0 auto;">
+                <!-- Stripe Pricing Table will be injected here -->
             </div>
             
             <div style="margin-top: 32px; min-height: 24px;">
@@ -836,7 +764,35 @@
             modalOverlay.classList.remove('active');
         }
         
+        function renderStripePricingTable(containerId) {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+            
+            // Clear previous content
+            container.innerHTML = '';
+            
+            // If user is not logged in, prompt them to login first before showing the table
+            // Pricing table needs an email to credit the user correctly
+            if (!currentEmail) {
+                container.innerHTML = `
+                    <div style="text-align: center; padding: 40px;">
+                        <p style="color: var(--text-secondary); margin-bottom: 16px;">Please log in or sign up first to purchase credits.</p>
+                        <button class="btn-primary" onclick="closePlanModal(); closePaywallModal(); openModal('Login')">Log In to Continue</button>
+                    </div>
+                `;
+                return;
+            }
+            
+            const pricingTable = document.createElement('stripe-pricing-table');
+            pricingTable.setAttribute('pricing-table-id', 'prctbl_1TSEndKOz4Kyu4lv4ifZFOtn');
+            pricingTable.setAttribute('publishable-key', 'pk_live_51TS9JOKOz4Kyu4lvYzCEomTeMxpmhuBQzrWfYHpwpIpf02lSYvU4X4STbMyaS0aBtLtfmAerivTWBDQfYz3N3Gmj00E1kllzRc');
+            pricingTable.setAttribute('client-reference-id', currentEmail);
+            
+            container.appendChild(pricingTable);
+        }
+        
         function openPlanModal() {
+            renderStripePricingTable('stripe-pricing-container-plan');
             planModalOverlay.classList.add('active');
         }
         
@@ -857,6 +813,7 @@
         let paywallTimer;
 
         function openPaywallModal() {
+            renderStripePricingTable('stripe-pricing-container-paywall');
             paywallModalOverlay.classList.add('active');
             paywallSkipBtn.disabled = true;
             paywallSkipBtn.style.opacity = '0.5';
@@ -933,32 +890,7 @@
             }
         });
 
-        // Stripe 決済処理
-        async function checkout(planType) {
-            if (!currentEmail) {
-                alert("Please login first.");
-                openModal("Login");
-                return;
-            }
-            try {
-                const formData = new FormData();
-                formData.append('email', currentEmail);
-                formData.append('plan_type', planType);
-                
-                const response = await fetch('http://127.0.0.1:8000/create-checkout-session', {
-                    method: 'POST',
-                    body: formData
-                });
-                
-                if (!response.ok) throw new Error('Failed to create checkout session');
-                const data = await response.json();
-                
-                // Stripe Checkout ページへリダイレクト
-                window.location.href = data.checkout_url;
-            } catch (err) {
-                alert(`Checkout Error: ${err.message}`);
-            }
-        }
+        // Stripe Pricing Table handles checkout now.
     </script>
 </body>
 </html>
