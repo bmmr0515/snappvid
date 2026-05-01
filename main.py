@@ -8,13 +8,16 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException, Form, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
+from starlette.middleware.sessions import SessionMiddleware
 from pydantic import BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from dotenv import load_dotenv
 from openai import OpenAI
+from authlib.integrations.starlette_client import OAuth
+from starlette.config import Config
 import requests
 import re
 import PIL.Image
@@ -44,6 +47,9 @@ app = FastAPI(
     description="TikTok/Shorts向けの顔出しなし動画を全自動生成するSaaS向けAPI",
     version="2.0.0"
 )
+
+# セッションミドルウェア (OAuthに必須)
+app.add_middleware(SessionMiddleware, secret_key=os.getenv("STRIPE_WEBHOOK_SECRET") or "super_secret_key_for_oauth")
 
 # CORS対応 (フロントエンドからのアクセスを許可)
 app.add_middleware(
@@ -164,11 +170,26 @@ STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
 STRIPE_PRICE_ID_STARTER = os.getenv("STRIPE_PRICE_ID_STARTER")
 STRIPE_PRICE_ID_PRO_ANNUAL = os.getenv("STRIPE_PRICE_ID_PRO_ANNUAL")
 STRIPE_PRICE_ID_TOPUP = os.getenv("STRIPE_PRICE_ID_TOPUP")
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 
 # Clients Initialize
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 if STRIPE_API_KEY:
     stripe.api_key = STRIPE_API_KEY
+
+# OAuth Configuration
+config = Config(environ=os.environ)
+oauth = OAuth(config)
+
+if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
+    oauth.register(
+        name='google',
+        server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
+        client_kwargs={
+            'scope': 'openid email profile'
+        }
+    )
 
 def hash_password(password: str) -> str:
     salt = bcrypt.gensalt()
@@ -202,7 +223,7 @@ class AuthResponse(BaseModel):
 
 # ==== Auth Endpoints ====
 @app.post("/signup", response_model=AuthResponse)
-@limiter.limit("5/minute")
+@limiter.limit("3/hour") # SPA M PREVENTION: Strictly limit traditional signups
 async def signup(request: Request, email: str = Form(...), password: str = Form(...)):
     if not is_valid_email(email):
         raise HTTPException(status_code=400, detail="Invalid email format.")
@@ -265,6 +286,58 @@ async def login(request: Request, email: str = Form(...), password: str = Form(.
         plan_status=user[3],
         credits=user[4]
     )
+
+@app.get('/auth/google/login')
+async def google_login(request: Request):
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        raise HTTPException(status_code=500, detail="Google OAuth is not configured on the server.")
+    
+    # Redirect URI is the callback endpoint
+    redirect_uri = request.url_for('google_callback')
+    # Fix for environments behind proxy (like Render)
+    redirect_uri = str(redirect_uri).replace("http://", "https://") if "localhost" not in str(redirect_uri) else str(redirect_uri)
+    return await oauth.google.authorize_redirect(request, redirect_uri)
+
+@app.get('/auth/google/callback')
+async def google_callback(request: Request):
+    try:
+        token = await oauth.google.authorize_access_token(request)
+        user_info = token.get('userinfo')
+        if not user_info:
+            raise HTTPException(status_code=400, detail="Failed to fetch user info from Google.")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"OAuth verification failed: {str(e)}")
+
+    email = user_info.get('email')
+    
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT id, plan_status, credits FROM users WHERE email = ?", (email,))
+    user = cursor.fetchone()
+    
+    if not user:
+        # Create new user
+        user_id = str(uuid.uuid4())
+        # Provide a dummy password hash since they use OAuth
+        dummy_hash = hash_password(str(uuid.uuid4()))
+        cursor.execute(
+            "INSERT INTO users (id, email, password_hash, plan_status, credits, is_verified) VALUES (?, ?, ?, ?, ?, ?)",
+            (user_id, email, dummy_hash, "Free", 10, 1) # Auto-verified since it's Google
+        )
+        conn.commit()
+        credits = 10
+    else:
+        user_id, plan_status, credits = user[0], user[1], user[2]
+        # Ensure is_verified is 1 for existing users who login via Google
+        cursor.execute("UPDATE users SET is_verified = 1 WHERE id = ?", (user_id,))
+        conn.commit()
+        
+    conn.close()
+    
+    # Redirect back to index.html with authentication data in the URL hash or query params
+    # Using query params for simplicity, the frontend will read them and clear the URL
+    return RedirectResponse(url=f"/?oauth=success&email={email}&credits={credits}")
 
 # ==== Stripe Endpoints ====
 @app.post("/webhook")
