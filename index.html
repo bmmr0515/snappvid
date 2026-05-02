@@ -733,7 +733,7 @@
             
             try {
                 // 1. Start generation (Background)
-                const response = await fetch('http://127.0.0.1:8000/generate-video', {
+                const response = await fetch('/generate-video', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ theme: theme, email: currentEmail })
@@ -760,7 +760,7 @@
                 // 2. Poll for status
                 pollingInterval = setInterval(async () => {
                     try {
-                        const statusRes = await fetch(`http://127.0.0.1:8000/generation-status/${jobId}`);
+                        const statusRes = await fetch(`/generation-status/${jobId}`);
                         if (!statusRes.ok) {
                             throw new Error('Failed to get status.');
                         }

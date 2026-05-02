@@ -336,7 +336,7 @@ async def stripe_webhook(request: Request):
 # ==== Video Generation Endpoint ====
 @app.post("/generate-video", response_model=VideoResponse)
 @limiter.limit("3/minute")
-async def generate_video(request: Request, body: VideoRequest):
+async def generate_video(request: Request, body: VideoRequest, background_tasks: BackgroundTasks):
     if not openai_client or not ELEVENLABS_API_KEY:
         raise HTTPException(status_code=500, detail="API Keys are not configured properly.")
 
