@@ -439,7 +439,8 @@ def process_video_background(job_id: str, theme: str, email: str, user_id: str, 
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"テーマ: {theme}"}
-            ]
+            ],
+            timeout=30.0
         )
         script = response.choices[0].message.content
         job_status[job_id]["script"] = script
@@ -468,7 +469,7 @@ def process_video_background(job_id: str, theme: str, email: str, user_id: str, 
             }
         }
         
-        response_audio = requests.post(elevenlabs_url, json=data, headers=headers)
+        response_audio = requests.post(elevenlabs_url, json=data, headers=headers, timeout=60.0)
         
         if response_audio.status_code != 200:
             raise Exception(f"ElevenLabs API Error: {response_audio.status_code} - {response_audio.text}")
@@ -489,9 +490,10 @@ def process_video_background(job_id: str, theme: str, email: str, user_id: str, 
             size="1024x1792",
             quality="standard",
             n=1,
+            timeout=60.0
         )
         image_url = image_response.data[0].url
-        img_data = requests.get(image_url).content
+        img_data = requests.get(image_url, timeout=30.0).content
         with open(bg_image_path, "wb") as f:
             f.write(img_data)
         
