@@ -3,6 +3,7 @@ import uuid
 import sqlite3
 import time
 import glob
+from typing import Optional
 from fastapi import FastAPI, HTTPException, Form, Depends, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
