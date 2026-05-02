@@ -349,9 +349,7 @@ async def generate_video(request: Request, body: VideoRequest, background_tasks:
 
     cleanup_old_files()
 
-    # ==== クレジット確認 ====
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
+    # ==== クレジット確認のみ（消費は成功時） ====
     cursor.execute("SELECT id, plan_status, credits FROM users WHERE email = ?", (email,))
     user = cursor.fetchone()
     
@@ -362,12 +360,10 @@ async def generate_video(request: Request, body: VideoRequest, background_tasks:
     user_id, plan_status, credits = user[0], user[1], user[2]
     is_special_trial = (email == "moriretsu06@gmail.com")
 
-    # ==== 仮押さえ処理 ====
-    cursor.execute("UPDATE users SET credits = credits - 10 WHERE email = ? AND credits >= 10", (email,))
-    if cursor.rowcount == 0:
+    if credits < 10 and not is_special_trial:
         conn.close()
-        raise HTTPException(status_code=403, detail="Credit limit reached or parallel generation detected.")
-    conn.commit()
+        raise HTTPException(status_code=403, detail="Credit limit reached. Please recharge.")
+    
     conn.close()
     
     is_pro = (plan_status == "Pro") or is_special_trial
@@ -412,8 +408,46 @@ async def get_generation_status(job_id: str):
         local_path=status_data["local_path"]
     )
 
+import threading
+
+def update_progress_gradually(job_id: str, current: int, target: int, duration_sec: int, stop_event: threading.Event):
+    """
+    徐々に進捗率を上げるためのヘルパー関数。外部APIなどの長い待機中にフリーズしているように見せないため。
+    """
+    step_time = duration_sec / (target - current) if target > current else 1.0
+    progress = current
+    while progress < target and not stop_event.is_set():
+        time.sleep(step_time)
+        if stop_event.is_set() or job_status[job_id]["status"] == "error":
+            break
+        progress += 1
+        job_status[job_id]["progress"] = progress
+
 def process_video_background(job_id: str, theme: str, email: str, user_id: str, is_pro: bool):
+    stop_event = threading.Event()
+    progress_thread = None
+
+    def start_pseudo_progress(current: int, target: int, expected_duration: int):
+        nonlocal progress_thread, stop_event
+        if progress_thread and progress_thread.is_alive():
+            stop_event.set()
+            progress_thread.join()
+        stop_event.clear()
+        progress_thread = threading.Thread(
+            target=update_progress_gradually, 
+            args=(job_id, current, target, expected_duration, stop_event)
+        )
+        progress_thread.start()
+
+    def stop_pseudo_progress(final_val: int):
+        nonlocal progress_thread, stop_event
+        if progress_thread and progress_thread.is_alive():
+            stop_event.set()
+            progress_thread.join()
+        job_status[job_id]["progress"] = final_val
+
     try:
+        is_special_trial = (email == "moriretsu06@gmail.com")
         timestamp = int(time.time())
         video_filename = f"video_{user_id}_{timestamp}.mp4"
         
@@ -422,8 +456,8 @@ def process_video_background(job_id: str, theme: str, email: str, user_id: str, 
         output_mp4_path = os.path.join("output", video_filename)
 
         # 1. 台本生成: OpenAI API (GPT-4o)
-        job_status[job_id]["progress"] = 10
         job_status[job_id]["message"] = "Generating script..."
+        start_pseudo_progress(0, 15, 10) # 0% から 15% まで約10秒かけて進む
         print(f"[{job_id}] Generating script for theme: {theme}")
         
         system_prompt = "あなたはTikTok/Shorts向けの短尺動画の台本ライターです。"
@@ -444,11 +478,12 @@ def process_video_background(job_id: str, theme: str, email: str, user_id: str, 
         )
         script = response.choices[0].message.content
         job_status[job_id]["script"] = script
+        stop_pseudo_progress(15)
         print(f"[{job_id}] Script generated:\n{script}\n")
 
         # 2. 音声生成: ElevenLabs API (REST API)
-        job_status[job_id]["progress"] = 30
         job_status[job_id]["message"] = "Generating voice..."
+        start_pseudo_progress(15, 45, 15) # 15% から 45% まで約15秒かけて進む
         print(f"[{job_id}] Generating audio...")
         
         voice_id = "pNInz6obpgDQGcFmaJgB" # Adam
@@ -472,16 +507,23 @@ def process_video_background(job_id: str, theme: str, email: str, user_id: str, 
         response_audio = requests.post(elevenlabs_url, json=data, headers=headers, timeout=60.0)
         
         if response_audio.status_code != 200:
-            raise Exception(f"ElevenLabs API Error: {response_audio.status_code} - {response_audio.text}")
+            error_msg = response_audio.text
+            try:
+                error_json = response_audio.json()
+                error_msg = error_json.get("detail", {}).get("message", response_audio.text)
+            except:
+                pass
+            raise Exception(f"ElevenLabs API Error: {error_msg}")
             
         with open(audio_path, "wb") as f:
             f.write(response_audio.content)
             
+        stop_pseudo_progress(45)
         print(f"[{job_id}] Audio saved to {audio_path}")
 
         # 3. 背景画像の生成とダウンロード: DALL-E 3
-        job_status[job_id]["progress"] = 50
         job_status[job_id]["message"] = "Generating background image..."
+        start_pseudo_progress(45, 65, 15) # 45% から 65% まで約15秒かけて進む
         print(f"[{job_id}] Generating background image via DALL-E 3...")
         
         image_response = openai_client.images.generate(
@@ -497,8 +539,9 @@ def process_video_background(job_id: str, theme: str, email: str, user_id: str, 
         with open(bg_image_path, "wb") as f:
             f.write(img_data)
         
-        job_status[job_id]["progress"] = 70
-        job_status[job_id]["message"] = "Synthesizing video..."
+        stop_pseudo_progress(65)
+        job_status[job_id]["message"] = "Synthesizing video (This may take a while)..."
+        start_pseudo_progress(65, 95, 40) # 65% から 95% まで約40秒かけて進む
         
         # 4. 字幕(テロップ)の分割と合成
         raw_phrases = [p.strip() for p in re.split(r'(?<=[.!?]) +', script) if p.strip()]
@@ -576,37 +619,30 @@ def process_video_background(job_id: str, theme: str, email: str, user_id: str, 
             os.remove(bg_image_path)
             print(f"[{job_id}] Removed temporary file: {bg_image_path}")
 
-        # ==== クレジット消費 ====
-        # 特別試用版の場合は、強制的にクレジットを -1 (以降ブロック) にする
+        # ==== クレジット消費 (成功時のみ) ====
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
         if is_special_trial:
-            conn = sqlite3.connect(DB_FILE)
-            cursor = conn.cursor()
             cursor.execute("UPDATE users SET plan_status = 'Free', credits = -1 WHERE email = ?", (email,))
-            conn.commit()
-            conn.close()
-        # 通常ユーザーは開始時に仮押さえ済みのため、成功時は何もしない
+        else:
+            cursor.execute("UPDATE users SET credits = credits - 10 WHERE email = ?", (email,))
+        conn.commit()
+        conn.close()
 
-        job_status[job_id]["progress"] = 100
+        stop_pseudo_progress(100)
         job_status[job_id]["message"] = "Completed!"
         job_status[job_id]["status"] = "completed"
-        job_status[job_id]["video_url"] = f"http://127.0.0.1:8000/files/{video_filename}"
+        job_status[job_id]["video_url"] = f"/files/{video_filename}"
         job_status[job_id]["local_path"] = output_mp4_path
 
     except Exception as e:
+        if 'stop_event' in locals():
+            stop_event.set()
+        if 'progress_thread' in locals() and progress_thread and progress_thread.is_alive():
+            progress_thread.join()
+            
         job_id_safe = job_id if 'job_id' in locals() else 'unknown'
         print(f"[{job_id_safe}] Error: {e}")
-        
-        # ==== 仮押さえの返却 ====
-        if not is_special_trial:
-            try:
-                conn_err = sqlite3.connect(DB_FILE)
-                cursor_err = conn_err.cursor()
-                cursor_err.execute("UPDATE users SET credits = credits + 10 WHERE email = ?", (email,))
-                conn_err.commit()
-                conn_err.close()
-                print(f"[{job_id_safe}] Refunded 10 credits to {email}")
-            except Exception as refund_err:
-                print(f"Failed to refund credits: {refund_err}")
                 
         job_status[job_id]["status"] = "error"
         job_status[job_id]["error"] = str(e)

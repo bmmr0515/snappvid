@@ -751,12 +751,8 @@
                 const data = await response.json();
                 jobId = data.job_id;
                 
-                // Deduct credits visually immediately after accepting
-                if (currentCredits >= 10) {
-                    currentCredits -= 10;
-                    updateCreditDisplay();
-                }
-                
+                // Note: Credits are now deducted on the backend ONLY upon successful generation.
+                // We will update the UI when generation is completed.
                 // 2. Poll for status
                 pollingInterval = setInterval(async () => {
                     try {
@@ -781,6 +777,12 @@
                             resultVideo.src = currentVideoUrl;
                             resultArea.classList.remove('hidden');
                             
+                            // Deduct credits visually now that it's complete
+                            if (currentCredits >= 10) {
+                                currentCredits -= 10;
+                                updateCreditDisplay();
+                            }
+                            
                             btnText.textContent = 'Generate';
                             spinner.style.display = 'none';
                             submitBtn.disabled = false;
@@ -790,27 +792,29 @@
                             }, 300);
                         } else if (statusData.status === "error") {
                             clearInterval(pollingInterval);
-                            throw new Error(statusData.error || "Generation failed.");
+                            progressMessage.style.color = '#ff4444';
+                            progressMessage.textContent = 'Error: ' + (statusData.error || "Generation failed.");
+                            btnText.textContent = 'Failed';
+                            spinner.style.display = 'none';
+                            submitBtn.disabled = false;
                         }
                     } catch (pollErr) {
                         clearInterval(pollingInterval);
-                        alert(`Error: ${pollErr.message}`);
-                        resetUI();
+                        progressMessage.style.color = '#ff4444';
+                        progressMessage.textContent = 'Error: ' + pollErr.message;
+                        btnText.textContent = 'Failed';
+                        spinner.style.display = 'none';
+                        submitBtn.disabled = false;
                     }
                 }, 2000); // Poll every 2 seconds
 
             } catch (err) {
-                alert(`Error: ${err.message}`);
-                resetUI();
-            }
-            
-            function resetUI() {
+                progressContainer.style.display = 'block';
+                progressMessage.style.color = '#ff4444';
+                progressMessage.textContent = 'Error: ' + err.message;
                 btnText.textContent = 'Generate';
                 spinner.style.display = 'none';
                 submitBtn.disabled = false;
-                progressContainer.style.display = 'none';
-                // Note: If an error happened after deduct, we should ideally fetch the current credits from a /me endpoint, 
-                // but for now the user can just refresh if credits were refunded on the backend.
             }
         });
 
