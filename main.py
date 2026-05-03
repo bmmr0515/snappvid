@@ -338,8 +338,8 @@ async def stripe_webhook(request: Request):
 @app.post("/generate-video", response_model=VideoResponse)
 @limiter.limit("3/minute")
 async def generate_video(request: Request, body: VideoRequest, background_tasks: BackgroundTasks):
-    if not openai_client or not ELEVENLABS_API_KEY:
-        raise HTTPException(status_code=500, detail="API Keys are not configured properly.")
+    if not openai_client:
+        raise HTTPException(status_code=500, detail="OpenAI API Key is not configured properly.")
 
     theme = sanitize_theme(body.theme)
     email = body.email
@@ -350,6 +350,8 @@ async def generate_video(request: Request, body: VideoRequest, background_tasks:
     cleanup_old_files()
 
     # ==== クレジット確認のみ（消費は成功時） ====
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
     cursor.execute("SELECT id, plan_status, credits FROM users WHERE email = ?", (email,))
     user = cursor.fetchone()
     
@@ -481,42 +483,22 @@ def process_video_background(job_id: str, theme: str, email: str, user_id: str, 
         stop_pseudo_progress(15)
         print(f"[{job_id}] Script generated:\n{script}\n")
 
-        # 2. 音声生成: ElevenLabs API (REST API)
+        # 2. 音声生成: OpenAI TTS API
         job_status[job_id]["message"] = "Generating voice..."
         start_pseudo_progress(15, 45, 15) # 15% から 45% まで約15秒かけて進む
-        print(f"[{job_id}] Generating audio...")
+        print(f"[{job_id}] Generating audio via OpenAI TTS...")
         
-        voice_id = "pNInz6obpgDQGcFmaJgB" # Adam
-        elevenlabs_url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
-        
-        headers = {
-            "Accept": "audio/mpeg",
-            "Content-Type": "application/json",
-            "xi-api-key": ELEVENLABS_API_KEY
-        }
-        
-        data = {
-            "text": script,
-            "model_id": "eleven_multilingual_v2",
-            "voice_settings": {
-                "stability": 0.5,
-                "similarity_boost": 0.5
-            }
-        }
-        
-        response_audio = requests.post(elevenlabs_url, json=data, headers=headers, timeout=60.0)
-        
-        if response_audio.status_code != 200:
-            error_msg = response_audio.text
-            try:
-                error_json = response_audio.json()
-                error_msg = error_json.get("detail", {}).get("message", response_audio.text)
-            except:
-                pass
-            raise Exception(f"ElevenLabs API Error: {error_msg}")
+        try:
+            with openai_client.with_streaming_response.audio.speech.create(
+                model="tts-1",
+                voice="onyx",
+                input=script,
+                timeout=60.0
+            ) as response_audio:
+                response_audio.stream_to_file(audio_path)
+        except Exception as e:
+            raise Exception(f"OpenAI TTS API Error: {str(e)}")
             
-        with open(audio_path, "wb") as f:
-            f.write(response_audio.content)
             
         stop_pseudo_progress(45)
         print(f"[{job_id}] Audio saved to {audio_path}")
