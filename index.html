@@ -754,16 +754,29 @@
                 // Note: Credits are now deducted on the backend ONLY upon successful generation.
                 // We will update the UI when generation is completed.
                 // 2. Poll for status
+                let retryCount = 0;
+                let lastProgress = 0;
+                
                 pollingInterval = setInterval(async () => {
                     try {
                         const statusRes = await fetch(`/generation-status/${jobId}`);
                         if (!statusRes.ok) {
-                            throw new Error('Failed to get status.');
+                            retryCount++;
+                            const maxRetries = lastProgress >= 90 ? 10 : 3; // 90%超えたら粘り強く10回(20秒)待つ
+                            if (retryCount >= maxRetries) {
+                                throw new Error('Failed to get status from server after multiple retries.');
+                            }
+                            console.warn(`Polling failed (attempt ${retryCount}/${maxRetries}). Retrying...`);
+                            return; // 今回のループはスキップして次を待つ
                         }
+                        
+                        // 成功した場合はリトライ回数をリセット
+                        retryCount = 0;
                         const statusData = await statusRes.json();
                         
                         // Update UI
                         const prog = statusData.progress;
+                        lastProgress = prog;
                         progressBar.style.width = `${prog}%`;
                         progressPercent.textContent = `${prog}%`;
                         progressMessage.textContent = statusData.message;
