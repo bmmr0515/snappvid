@@ -762,9 +762,9 @@
                         const statusRes = await fetch(`/generation-status/${jobId}`);
                         if (!statusRes.ok) {
                             retryCount++;
-                            const maxRetries = lastProgress >= 90 ? 10 : 3; // 90%超えたら粘り強く10回(20秒)待つ
+                            const maxRetries = lastProgress >= 90 ? 150 : 10; // 90%超えたら5分間(150回)粘るように延長
                             if (retryCount >= maxRetries) {
-                                throw new Error('Failed to get status from server after multiple retries.');
+                                throw new Error('Generation timed out or server unresponsive. Please try again.');
                             }
                             console.warn(`Polling failed (attempt ${retryCount}/${maxRetries}). Retrying...`);
                             return; // 今回のループはスキップして次を待つ

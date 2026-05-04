@@ -48,7 +48,7 @@ app = FastAPI(
 )
 
 # セッションミドルウェア (OAuthに必須)
-app.add_middleware(SessionMiddleware, secret_key=os.getenv("STRIPE_WEBHOOK_SECRET") or "super_secret_key_for_oauth")
+app.add_middleware(SessionMiddleware, secret_key=os.getenv("STRIPE_WEBHOOK_SECRET") or "super_secret_key_for_oauth", max_age=86400*7) # 1 week session
 
 # CORS対応 (フロントエンドからのアクセスを許可)
 app.add_middleware(
@@ -612,10 +612,10 @@ def process_video_background(job_id: str, theme: str, email: str, user_id: str, 
         conn.close()
 
         stop_pseudo_progress(100)
-        job_status[job_id]["message"] = "Completed!"
-        job_status[job_id]["status"] = "completed"
         job_status[job_id]["video_url"] = f"/files/{video_filename}"
         job_status[job_id]["local_path"] = output_mp4_path
+        job_status[job_id]["message"] = "Completed!"
+        job_status[job_id]["status"] = "completed"
 
     except Exception as e:
         if 'stop_event' in locals():
