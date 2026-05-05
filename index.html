@@ -654,34 +654,59 @@
         let currentCredits = 0;
         
         // Check for OAuth Callback in URL
-        window.addEventListener('DOMContentLoaded', () => {
+        let pollingInterval = null;
+        let currentPlan = "Free";
+        
+        window.addEventListener('DOMContentLoaded', async () => {
+            const email = localStorage.getItem('snappvid_email') || "";
+            if (email) {
+                currentEmail = email;
+                document.getElementById('headerLoginBtn').textContent = email;
+                document.getElementById('headerSignupBtn').style.display = 'none';
+                await loadUserProfile();
+                await checkActiveJob();
+            }
+
             const urlParams = new URLSearchParams(window.location.search);
             if (urlParams.get('oauth') === 'success') {
                 const email = urlParams.get('email');
-                const credits = parseInt(urlParams.get('credits')) || 0;
-                
                 if (email) {
                     currentEmail = email;
-                    currentCredits = credits;
-                    
-                    const loginBtn = document.getElementById('headerLoginBtn');
-                    loginBtn.textContent = email;
+                    localStorage.setItem('snappvid_email', email);
+                    document.getElementById('headerLoginBtn').textContent = email;
                     document.getElementById('headerSignupBtn').style.display = 'none';
-                    
-                    updateCreditDisplay();
-                    
-                    // Clean up URL without refreshing
                     window.history.replaceState({}, document.title, window.location.pathname);
-                    
-                    // Force the paywall logic for new users or let them see the site
+                    await loadUserProfile();
                     openPaywallModal();
                 }
             }
         });
 
+        async function loadUserProfile() {
+            if (!currentEmail) return;
+            try {
+                const response = await fetch('/api/user-profile');
+                if (response.ok) {
+                    const data = await response.json();
+                    currentCredits = data.credits;
+                    currentPlan = data.plan;
+                    updateCreditDisplay();
+                    
+                    if (data.last_video_url && resultArea.classList.contains('hidden')) {
+                        currentVideoUrl = data.last_video_url;
+                        resultVideo.src = currentVideoUrl;
+                        resultArea.classList.remove('hidden');
+                        document.getElementById('progressContainer').style.display = 'none';
+                    }
+                }
+            } catch (err) {
+                console.error("Failed to load user profile:", err);
+            }
+        }
+
         function updateCreditDisplay() {
             const countSpan = document.getElementById('creditCount');
-            countSpan.textContent = currentCredits;
+            countSpan.textContent = currentCredits === -1 ? '∞' : currentCredits;
             
             const floatingBtn = document.getElementById('floatingUpgradeBtn');
             const plusBtn = document.getElementById('headerPlusBtn');
@@ -689,7 +714,7 @@
             document.getElementById('creditDisplay').style.display = 'flex';
             floatingBtn.classList.add('visible');
             
-            if (currentCredits <= 20) {
+            if (currentCredits !== -1 && currentCredits <= 20) {
                 countSpan.classList.add('credit-warning');
                 plusBtn.style.animation = 'flashWarning 1s infinite';
                 floatingBtn.style.animation = 'flashWarning 1s infinite';
@@ -717,22 +742,7 @@
             submitBtn.disabled = true;
             resultArea.classList.add('hidden');
             
-            // UI elements for progress
-            const progressContainer = document.getElementById('progressContainer');
-            const progressMessage = document.getElementById('progressMessage');
-            const progressPercent = document.getElementById('progressPercent');
-            const progressBar = document.getElementById('progressBar');
-            
-            progressContainer.style.display = 'block';
-            progressBar.style.width = '0%';
-            progressPercent.textContent = '0%';
-            progressMessage.textContent = 'Starting...';
-            
-            let jobId = null;
-            let pollingInterval = null;
-            
             try {
-                // 1. Start generation (Background)
                 const response = await fetch('/generate-video', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -749,79 +759,11 @@
                 }
 
                 const data = await response.json();
-                jobId = data.job_id;
-                
-                // Note: Credits are now deducted on the backend ONLY upon successful generation.
-                // We will update the UI when generation is completed.
-                // 2. Poll for status
-                let retryCount = 0;
-                let lastProgress = 0;
-                
-                pollingInterval = setInterval(async () => {
-                    try {
-                        const statusRes = await fetch(`/generation-status/${jobId}`);
-                        if (!statusRes.ok) {
-                            retryCount++;
-                            const maxRetries = lastProgress >= 90 ? 150 : 10; // 90%超えたら5分間(150回)粘るように延長
-                            if (retryCount >= maxRetries) {
-                                throw new Error('Generation timed out or server unresponsive. Please try again.');
-                            }
-                            console.warn(`Polling failed (attempt ${retryCount}/${maxRetries}). Retrying...`);
-                            return; // 今回のループはスキップして次を待つ
-                        }
-                        
-                        // 成功した場合はリトライ回数をリセット
-                        retryCount = 0;
-                        const statusData = await statusRes.json();
-                        
-                        // Update UI
-                        const prog = statusData.progress;
-                        lastProgress = prog;
-                        progressBar.style.width = `${prog}%`;
-                        progressPercent.textContent = `${prog}%`;
-                        progressMessage.textContent = statusData.message;
-                        btnText.textContent = `Generating... ${prog}%`;
-                        
-                        if (statusData.status === "completed") {
-                            clearInterval(pollingInterval);
-                            
-                            // Done
-                            currentVideoUrl = statusData.video_url;
-                            resultVideo.src = currentVideoUrl;
-                            resultArea.classList.remove('hidden');
-                            
-                            // Deduct credits visually now that it's complete
-                            if (currentCredits >= 10) {
-                                currentCredits -= 10;
-                                updateCreditDisplay();
-                            }
-                            
-                            btnText.textContent = 'Generate';
-                            spinner.style.display = 'none';
-                            submitBtn.disabled = false;
-                            
-                            setTimeout(() => {
-                                resultArea.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                            }, 300);
-                        } else if (statusData.status === "error") {
-                            clearInterval(pollingInterval);
-                            progressMessage.style.color = '#ff4444';
-                            progressMessage.textContent = 'Error: ' + (statusData.error || "Generation failed.");
-                            btnText.textContent = 'Failed';
-                            spinner.style.display = 'none';
-                            submitBtn.disabled = false;
-                        }
-                    } catch (pollErr) {
-                        clearInterval(pollingInterval);
-                        progressMessage.style.color = '#ff4444';
-                        progressMessage.textContent = 'Error: ' + pollErr.message;
-                        btnText.textContent = 'Failed';
-                        spinner.style.display = 'none';
-                        submitBtn.disabled = false;
-                    }
-                }, 2000); // Poll every 2 seconds
+                startPollingForJob(data.job_id);
 
             } catch (err) {
+                const progressContainer = document.getElementById('progressContainer');
+                const progressMessage = document.getElementById('progressMessage');
                 progressContainer.style.display = 'block';
                 progressMessage.style.color = '#ff4444';
                 progressMessage.textContent = 'Error: ' + err.message;
@@ -830,6 +772,94 @@
                 submitBtn.disabled = false;
             }
         });
+
+        async function startPollingForJob(jobId) {
+            const progressContainer = document.getElementById('progressContainer');
+            const progressMessage = document.getElementById('progressMessage');
+            const progressPercent = document.getElementById('progressPercent');
+            const progressBar = document.getElementById('progressBar');
+            
+            progressContainer.style.display = 'block';
+            submitBtn.disabled = true;
+            spinner.style.display = 'block';
+            btnText.textContent = 'Generating...';
+
+            let retryCount = 0;
+            let lastProgress = 0;
+            
+            if (pollingInterval) clearInterval(pollingInterval);
+            
+            pollingInterval = setInterval(async () => {
+                try {
+                    const statusRes = await fetch(`/generation-status/${jobId}`);
+                    if (!statusRes.ok) {
+                        retryCount++;
+                        const maxRetries = lastProgress >= 90 ? 150 : 10;
+                        if (retryCount >= maxRetries) {
+                            throw new Error('Generation timed out or server unresponsive.');
+                        }
+                        return;
+                    }
+                    
+                    retryCount = 0;
+                    const statusData = await statusRes.json();
+                    
+                    const prog = statusData.progress;
+                    lastProgress = prog;
+                    progressBar.style.width = `${prog}%`;
+                    progressPercent.textContent = `${prog}%`;
+                    progressMessage.textContent = statusData.message;
+                    btnText.textContent = `Generating... ${prog}%`;
+                    
+                    if (statusData.status === "completed") {
+                        clearInterval(pollingInterval);
+                        currentVideoUrl = statusData.video_url;
+                        resultVideo.src = currentVideoUrl;
+                        resultArea.classList.remove('hidden');
+                        
+                        await loadUserProfile(); // クレジット更新
+                        
+                        btnText.textContent = 'Generate';
+                        spinner.style.display = 'none';
+                        submitBtn.disabled = false;
+                        
+                        setTimeout(() => {
+                            resultArea.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }, 300);
+                    } else if (statusData.status === "error") {
+                        clearInterval(pollingInterval);
+                        progressMessage.style.color = '#ff4444';
+                        progressMessage.textContent = 'Error: ' + (statusData.error || "Generation failed.");
+                        btnText.textContent = 'Failed';
+                        spinner.style.display = 'none';
+                        submitBtn.disabled = false;
+                    }
+                } catch (pollErr) {
+                    clearInterval(pollingInterval);
+                    progressMessage.style.color = '#ff4444';
+                    progressMessage.textContent = 'Error: ' + pollErr.message;
+                    btnText.textContent = 'Failed';
+                    spinner.style.display = 'none';
+                    submitBtn.disabled = false;
+                }
+            }, 2000);
+        }
+
+        async function checkActiveJob() {
+            try {
+                const res = await fetch('/api/active-job');
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.job_id) {
+                        startPollingForJob(data.job_id);
+                    }
+                }
+            } catch (e) {
+                console.error("Failed to check active job", e);
+            }
+        }
+
+
 
         // Post to YouTube (Feature Removed / Commented Out)
         /*

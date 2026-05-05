@@ -114,20 +114,22 @@ def init_db():
         )
     ''')
     
+    # ユーザーテーブルの拡張
     cursor.execute("PRAGMA table_info(users)")
     columns = [col[1] for col in cursor.fetchall()]
-    if 'credits' not in columns:
-        cursor.execute("ALTER TABLE users ADD COLUMN credits INTEGER DEFAULT 1")
-    if 'is_verified' not in columns:
-        cursor.execute("ALTER TABLE users ADD COLUMN is_verified INTEGER DEFAULT 0")
-        cursor.execute("ALTER TABLE users ADD COLUMN otp_code TEXT")
-        
-    # 新規：ゲストユーザーの生成履歴
+    if 'last_video_url' not in columns:
+        cursor.execute("ALTER TABLE users ADD COLUMN last_video_url TEXT")
+    
+    # ジョブ追跡テーブル
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS guest_generations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ip_address TEXT NOT NULL,
-            user_agent TEXT NOT NULL,
+        CREATE TABLE IF NOT EXISTS video_jobs (
+            job_id TEXT PRIMARY KEY,
+            email TEXT NOT NULL,
+            status TEXT NOT NULL,
+            progress INTEGER DEFAULT 0,
+            message TEXT,
+            video_url TEXT,
+            error TEXT,
             created_at INTEGER NOT NULL
         )
     ''')
@@ -379,8 +381,19 @@ async def generate_video(request: Request, body: VideoRequest, background_tasks:
         "video_url": None,
         "script": None,
         "local_path": None,
-        "error": None
+        "error": None,
+        "created_at": time.time()
     }
+    
+    # データベースにジョブを登録 (永続化)
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO video_jobs (job_id, email, status, progress, message, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (job_id, email, "processing", 0, "Initializing...", time.time())
+    )
+    conn.commit()
+    conn.close()
     
     # ==== バックグラウンドタスクの登録 ====
     background_tasks.add_task(process_video_background, job_id, theme, email, user_id, is_pro)
@@ -392,12 +405,67 @@ async def generate_video(request: Request, body: VideoRequest, background_tasks:
         theme=theme
     )
 
+def update_job_db(job_id: str, status: str = None, progress: int = None, message: str = None, video_url: str = None, error: str = None):
+    """データベース上のジョブステータスを更新する"""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    updates = []
+    params = []
+    if status:
+        updates.append("status = ?")
+        params.append(status)
+    if progress is not None:
+        updates.append("progress = ?")
+        params.append(progress)
+    if message:
+        updates.append("message = ?")
+        params.append(message)
+    if video_url:
+        updates.append("video_url = ?")
+        params.append(video_url)
+    if error:
+        updates.append("error = ?")
+        params.append(error)
+    
+    if updates:
+        sql = f"UPDATE video_jobs SET {', '.join(updates)} WHERE job_id = ?"
+        params.append(job_id)
+        cursor.execute(sql, params)
+        conn.commit()
+    conn.close()
+    
+    # メモリ上のキャッシュも同期（高速アクセスのため）
+    if job_id in job_status:
+        if status: job_status[job_id]["status"] = status
+        if progress is not None: job_status[job_id]["progress"] = progress
+        if message: job_status[job_id]["message"] = message
+        if video_url: job_status[job_id]["video_url"] = video_url
+        if error: job_status[job_id]["error"] = error
+
 @app.get("/generation-status/{job_id}", response_model=VideoStatusResponse)
 async def get_generation_status(job_id: str):
-    if job_id not in job_status:
-        raise HTTPException(status_code=404, detail="Job ID not found.")
+    # まずメモリをチェック
+    if job_id in job_status:
+        status_data = job_status[job_id]
+    else:
+        # メモリになければDBをチェック（サーバー再起動対策）
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("SELECT status, progress, message, video_url, error FROM video_jobs WHERE job_id = ?", (job_id,))
+        row = cursor.fetchone()
+        conn.close()
+        if not row:
+            raise HTTPException(status_code=404, detail="Job ID not found.")
+        status_data = {
+            "status": row[0],
+            "progress": row[1],
+            "message": row[2],
+            "video_url": row[3],
+            "error": row[4],
+            "script": None, # DBには保存していない
+            "local_path": None
+        }
         
-    status_data = job_status[job_id]
     if status_data["status"] == "error":
         raise HTTPException(status_code=500, detail=status_data.get("error", "Unknown error occurred."))
         
@@ -406,9 +474,50 @@ async def get_generation_status(job_id: str):
         progress=status_data["progress"],
         message=status_data["message"],
         video_url=status_data["video_url"],
-        script=status_data["script"],
-        local_path=status_data["local_path"]
+        script=status_data.get("script"),
+        local_path=status_data.get("local_path")
     )
+
+@app.get("/api/active-job")
+async def get_active_job(request: Request):
+    user_info = request.session.get("user")
+    if not user_info:
+        return {"job_id": None}
+    
+    email = user_info["email"]
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    # 直近1時間以内の実行中ジョブを探す
+    cursor.execute(
+        "SELECT job_id FROM video_jobs WHERE email = ? AND status = 'processing' AND created_at > ? ORDER BY created_at DESC LIMIT 1", 
+        (email, time.time() - 3600)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return {"job_id": row[0] if row else None}
+
+@app.get("/api/user-profile")
+async def get_user_profile(request: Request):
+    user_info = request.session.get("user")
+    if not user_info:
+        raise HTTPException(status_code=401, detail="Not logged in")
+    
+    email = user_info["email"]
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT credits, plan_status, last_video_url FROM users WHERE email = ?", (email,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    return {
+        "email": email,
+        "credits": row[0],
+        "plan": row[1],
+        "last_video_url": row[2]
+    }
 
 import threading
 
@@ -420,10 +529,10 @@ def update_progress_gradually(job_id: str, current: int, target: int, duration_s
     progress = current
     while progress < target and not stop_event.is_set():
         time.sleep(step_time)
-        if stop_event.is_set() or job_status[job_id]["status"] == "error":
+        if stop_event.is_set():
             break
         progress += 1
-        job_status[job_id]["progress"] = progress
+        update_job_db(job_id, progress=progress)
 
 def process_video_background(job_id: str, theme: str, email: str, user_id: str, is_pro: bool):
     stop_event = threading.Event()
@@ -446,21 +555,23 @@ def process_video_background(job_id: str, theme: str, email: str, user_id: str, 
         if progress_thread and progress_thread.is_alive():
             stop_event.set()
             progress_thread.join()
-        job_status[job_id]["progress"] = final_val
+        update_job_db(job_id, progress=final_val)
 
     try:
         is_special_trial = (email == "moriretsu06@gmail.com")
         timestamp = int(time.time())
-        video_filename = f"video_{user_id}_{timestamp}.mp4"
+        # セキュリティ強化のため推測不可能なファイル名にする
+        unique_id = str(uuid.uuid4())[:8]
+        video_filename = f"video_{unique_id}_{timestamp}.mp4"
         
         audio_path = os.path.join("output", f"audio_{job_id}.mp3")
         bg_image_path = os.path.join("output", f"bg_{job_id}.png")
         output_mp4_path = os.path.join("output", video_filename)
 
         # 1. 台本生成: OpenAI API (GPT-4o)
-        job_status[job_id]["message"] = "Generating script..."
-        start_pseudo_progress(0, 15, 10) # 0% から 15% まで約10秒かけて進む
-        print(f"[{job_id}] Generating script for theme: {theme}")
+        update_job_db(job_id, message="Generating script...")
+        start_pseudo_progress(0, 15, 10)
+        print(f"[{job_id}] STEP 1: Generating script...")
         
         system_prompt = "あなたはTikTok/Shorts向けの短尺動画の台本ライターです。"
         if is_pro:
@@ -479,14 +590,14 @@ def process_video_background(job_id: str, theme: str, email: str, user_id: str, 
             timeout=30.0
         )
         script = response.choices[0].message.content
-        job_status[job_id]["script"] = script
+        if job_id in job_status: job_status[job_id]["script"] = script
         stop_pseudo_progress(15)
         print(f"[{job_id}] Script generated:\n{script}\n")
 
         # 2. 音声生成: OpenAI TTS API
-        job_status[job_id]["message"] = "Generating voice..."
-        start_pseudo_progress(15, 45, 15) # 15% から 45% まで約15秒かけて進む
-        print(f"[{job_id}] Generating audio via OpenAI TTS...")
+        update_job_db(job_id, message="Generating voice (OpenAI)...")
+        start_pseudo_progress(15, 45, 15)
+        print(f"[{job_id}] STEP 2: Generating audio via OpenAI TTS...")
         
         try:
             with openai_client.with_streaming_response.audio.speech.create(
@@ -497,16 +608,16 @@ def process_video_background(job_id: str, theme: str, email: str, user_id: str, 
             ) as response_audio:
                 response_audio.stream_to_file(audio_path)
         except Exception as e:
+            print(f"[{job_id}] TTS Error: {e}")
             raise Exception(f"OpenAI TTS API Error: {str(e)}")
-            
-            
+        
         stop_pseudo_progress(45)
-        print(f"[{job_id}] Audio saved to {audio_path}")
+        print(f"[{job_id}] Audio saved. Length: {duration if 'duration' in locals() else 'unknown'}")
 
         # 3. 背景画像の生成とダウンロード: DALL-E 3
-        job_status[job_id]["message"] = "Generating background image..."
-        start_pseudo_progress(45, 65, 15) # 45% から 65% まで約15秒かけて進む
-        print(f"[{job_id}] Generating background image via DALL-E 3...")
+        update_job_db(job_id, message="Generating background image (DALL-E 3)...")
+        start_pseudo_progress(45, 65, 15)
+        print(f"[{job_id}] STEP 3: Generating background image...")
         
         image_response = openai_client.images.generate(
             model="dall-e-3",
@@ -542,49 +653,68 @@ def process_video_background(job_id: str, theme: str, email: str, user_id: str, 
         text_clips = []
         current_time = 0
         
-        selected_font = "/System/Library/Fonts/Supplemental/Arial.ttf"
+        # フォントの選択 (Mac/Linux両対応)
+        selected_font = "Arial"
+        if platform.system() == "Darwin":
+            selected_font = "/System/Library/Fonts/Supplemental/Arial.ttf"
+        else:
+            # RenderなどのLinux環境での一般的なフォントパス
+            possible_fonts = [
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+                "Arial-Bold",
+                "Helvetica-Bold"
+            ]
+            for fpath in possible_fonts:
+                if os.path.exists(fpath):
+                    selected_font = fpath
+                    break
         
         for phrase in phrases:
             char_count = len(phrase.replace(" ", ""))
             phrase_duration = (char_count / total_chars) * duration if total_chars > 0 else duration / len(phrases)
             
+            # メモリ節約のためサイズとフォントサイズを縮小 (480x854基準)
             txt_clip = TextClip(
-                phrase, fontsize=70, color='white', stroke_color='black', stroke_width=2,
-                method='caption', size=(900, None), align='center', font=selected_font
+                phrase, fontsize=35, color='white', stroke_color='black', stroke_width=1,
+                method='caption', size=(400, None), align='center', font=selected_font
             )
             w, h = txt_clip.size
-            bg_box = ColorClip(size=(w + 60, h + 40), color=(0,0,0)).set_opacity(0.6)
-            bg_box = bg_box.set_position(('center', 1250 - 20)).set_start(current_time).set_duration(phrase_duration)
-            txt_clip = txt_clip.set_position(('center', 1250)).set_start(current_time).set_duration(phrase_duration)
+            bg_box = ColorClip(size=(w + 30, h + 15), color=(0,0,0)).set_opacity(0.6)
+            # 縦方向の位置を調整
+            bg_box = bg_box.set_position(('center', 600 - 10)).set_start(current_time).set_duration(phrase_duration)
+            txt_clip = txt_clip.set_position(('center', 600)).set_start(current_time).set_duration(phrase_duration)
             text_clips.extend([bg_box, txt_clip])
             current_time += phrase_duration
             
         if not is_pro:
             wm_clip = TextClip(
-                "Powered by SnappVid", fontsize=40, color='white', font=selected_font
-            ).set_position(('center', 1600)).set_duration(duration).set_opacity(0.4)
+                "Powered by SnappVid", fontsize=20, color='white', font=selected_font
+            ).set_position(('center', 800)).set_duration(duration).set_opacity(0.4)
             text_clips.append(wm_clip)
         
-        # 背景画像の設定とズームアニメーション
-        bg_clip = ImageClip(bg_image_path).set_duration(duration)
-        # Ken Burns 効果（ゆっくりズームイン）
-        # Pro版の場合はよりダイナミックにズーム
-        zoom_factor = 0.15 if is_pro else 0.08
-        def zoom_in(t):
-            return 1.0 + zoom_factor * (t / duration)
-            
-        bg_clip = bg_clip.resize(zoom_in).set_position(('center', 'center'))
+        print(f"[{job_id}] STEP 4: Starting video synthesis...")
+        update_job_db(job_id, message="Synthesizing final video (480p)...")
         
-        final_video = CompositeVideoClip([bg_clip] + text_clips, size=(1024, 1792))
+        # 背景画像の設定
+        bg_clip = ImageClip(bg_image_path).set_duration(duration)
+        # メモリ節約のためズームアニメーション( Ken Burns)を一旦無効化
+        # 解像度をさらに落としてメモリ消費を抑える (480x854)
+        bg_clip = bg_clip.resize(height=854).set_position(('center', 'center'))
+        
+        final_video = CompositeVideoClip([bg_clip] + text_clips, size=(480, 854))
         final_video = final_video.set_audio(audio_clip)
         
+        print(f"[{job_id}] Exporting video file (24fps, single-thread)...")
+        # 24fps & シングルスレッドで極限まで負荷を軽減
         final_video.write_videofile(
             output_mp4_path,
-            fps=30,
+            fps=24,
             codec="libx264",
             audio_codec="aac",
             preset="ultrafast",
-            logger=None
+            logger=None,
+            threads=1
         )
         
         print(f"[{job_id}] Video synthesis complete: {output_mp4_path}")
@@ -608,14 +738,21 @@ def process_video_background(job_id: str, theme: str, email: str, user_id: str, 
             cursor.execute("UPDATE users SET plan_status = 'Free', credits = -1 WHERE email = ?", (email,))
         else:
             cursor.execute("UPDATE users SET credits = credits - 10 WHERE email = ?", (email,))
+        
+        # ユーザーの最終動画URLも保存
+        cursor.execute("UPDATE users SET last_video_url = ? WHERE email = ?", (f"/files/{video_filename}", email))
+        
         conn.commit()
         conn.close()
 
         stop_pseudo_progress(100)
-        job_status[job_id]["video_url"] = f"/files/{video_filename}"
-        job_status[job_id]["local_path"] = output_mp4_path
-        job_status[job_id]["message"] = "Completed!"
-        job_status[job_id]["status"] = "completed"
+        update_job_db(job_id, 
+                      status="completed", 
+                      message="Completed!", 
+                      video_url=f"/files/{video_filename}")
+        
+        if job_id in job_status:
+            job_status[job_id]["local_path"] = output_mp4_path
 
     except Exception as e:
         if 'stop_event' in locals():
@@ -626,8 +763,7 @@ def process_video_background(job_id: str, theme: str, email: str, user_id: str, 
         job_id_safe = job_id if 'job_id' in locals() else 'unknown'
         print(f"[{job_id_safe}] Error: {e}")
                 
-        job_status[job_id]["status"] = "error"
-        job_status[job_id]["error"] = str(e)
+        update_job_db(job_id, status="error", error=str(e))
     finally:
         active_generation_users.discard(email)
 
