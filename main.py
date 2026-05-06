@@ -9,6 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
+import threading
+import queue
 from pydantic import BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -91,7 +93,6 @@ async def serve_index():
 DISPOSABLE_DOMAINS = {"mailinator.com", "tempmail.com", "10minutemail.com", "yopmail.com", "guerrillamail.com", "throwawaymail.com", "temp-mail.org", "trashmail.com", "getnada.com"}
 active_generation_users = set()
 # 有料ユーザー優先の処理キュー
-import queue
 generation_queue = queue.PriorityQueue()
 
 # ジョブ状態のトラッキング用
@@ -599,8 +600,6 @@ async def get_user_profile(request: Request):
         "plan": row[1],
         "last_video_url": row[2]
     }
-
-import threading
 
 def update_progress_gradually(job_id: str, current: int, target: int, duration_sec: int, stop_event: threading.Event):
     """
