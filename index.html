@@ -638,6 +638,16 @@
         </div>
     </div>
 
+    <!-- Footer -->
+    <footer style="margin-top: auto; padding: 40px 20px; text-align: center; border-top: 1px solid var(--border-color); background: rgba(28, 28, 30, 0.4);">
+        <div style="max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; align-items: center; gap: 16px;">
+            <p style="font-size: 14px; color: var(--text-secondary); margin: 0;">&copy; 2026 SnappVid AI. All rights reserved.</p>
+            <div style="display: flex; gap: 24px;">
+                <a href="/legal" style="color: var(--text-secondary); text-decoration: none; font-size: 13px; transition: color 0.2s;" onmouseover="this.style.color='var(--text-primary)'" onmouseout="this.style.color='var(--text-secondary)'">特定商取引法に基づく表記</a>
+            </div>
+        </div>
+    </footer>
+
     <script>
         const form = document.getElementById('generateForm');
         const btnText = document.getElementById('btnText');
@@ -720,7 +730,7 @@
         function updateCreditDisplay() {
             const countSpan = document.getElementById('creditCount');
             if (!countSpan) return;
-            countSpan.textContent = currentCredits === -1 ? '∞' : currentCredits;
+            countSpan.textContent = currentCredits;
             
             const floatingBtn = document.getElementById('floatingUpgradeBtn');
             const plusBtn = document.getElementById('headerPlusBtn');
@@ -732,12 +742,33 @@
             }
             if (floatingBtn) floatingBtn.classList.add('visible');
             
-            if (currentCredits !== -1 && currentCredits <= 20) {
+            // クレジットが0の場合の「追加する」ボタン表示
+            const existingTopupBtn = document.getElementById('zeroCreditTopupBtn');
+            if (currentCredits === 0) {
+                if (!existingTopupBtn) {
+                    const topupBtn = document.createElement('button');
+                    topupBtn.id = 'zeroCreditTopupBtn';
+                    topupBtn.className = 'btn-primary';
+                    topupBtn.style.padding = '4px 12px';
+                    topupBtn.style.fontSize = '12px';
+                    topupBtn.style.marginLeft = '8px';
+                    topupBtn.style.background = 'var(--accent)';
+                    topupBtn.style.color = 'white';
+                    topupBtn.textContent = 'クレジットを追加';
+                    topupBtn.onclick = () => openPlanModal();
+                    creditDisplay.appendChild(topupBtn);
+                }
                 countSpan.style.color = '#ff4444';
-                if (plusBtn) plusBtn.style.animation = 'flashWarning 1s infinite';
             } else {
-                countSpan.style.color = 'white';
-                if (plusBtn) plusBtn.style.animation = 'none';
+                if (existingTopupBtn) existingTopupBtn.remove();
+                
+                if (currentCredits <= 20) {
+                    countSpan.style.color = '#ff4444';
+                    if (plusBtn) plusBtn.style.animation = 'flashWarning 1s infinite';
+                } else {
+                    countSpan.style.color = 'white';
+                    if (plusBtn) plusBtn.style.animation = 'none';
+                }
             }
         }
 
