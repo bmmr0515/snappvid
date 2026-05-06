@@ -719,9 +719,9 @@ def process_video_background(job_id: str, theme: str, email: str, user_id: str, 
         
         if is_pro:
             # Proユーザーには滑らかなズームアニメーション（Ken Burns）を追加
-            # 負荷を抑えるため倍率を控えめ（10%増）にする
-            bg_clip = bg_clip.resize(lambda t: 1.0 + 0.1 * (t / duration))
-            print(f"[{job_id}] Zoom effect applied for Pro user.")
+            # メモリ消費を抑えるため、倍率は5%増（0.05）に抑える
+            bg_clip = bg_clip.resize(lambda t: 1.0 + 0.05 * (t / duration))
+            print(f"[{job_id}] Subtle zoom effect applied for Pro user.")
             
         bg_clip = bg_clip.resize(height=854).set_position(('center', 'center'))
         
@@ -729,6 +729,7 @@ def process_video_background(job_id: str, theme: str, email: str, user_id: str, 
         final_video = final_video.set_audio(audio_clip)
         
         print(f"[{job_id}] Exporting video file (24fps, single-thread)...")
+        update_job_db(job_id, progress=95, message="Encoding final video... (This may take a few minutes)")
         # 24fps & シングルスレッドで極限まで負荷を軽減
         final_video.write_videofile(
             output_mp4_path,
