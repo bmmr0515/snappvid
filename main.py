@@ -76,6 +76,10 @@ async def read_legal():
 async def read_contact():
     return FileResponse('contact.html')
 
+@app.get("/admin")
+async def read_admin():
+    return FileResponse('admin.html')
+
 @app.head("/")
 async def serve_index():
     # ヘルスチェックやブラウザからのアクセス時にindex.htmlを返す
@@ -86,6 +90,9 @@ async def serve_index():
 # セキュリティ設定
 DISPOSABLE_DOMAINS = {"mailinator.com", "tempmail.com", "10minutemail.com", "yopmail.com", "guerrillamail.com", "throwawaymail.com", "temp-mail.org", "trashmail.com", "getnada.com"}
 active_generation_users = set()
+# 有料ユーザー優先の処理キュー
+import queue
+generation_queue = queue.PriorityQueue()
 
 # ジョブ状態のトラッキング用
 job_status = {}
@@ -502,6 +509,56 @@ async def get_generation_status(job_id: str):
         local_path=status_data.get("local_path")
     )
 
+# ==== Admin / Analytics Endpoints ====
+@app.get("/api/admin/stats")
+async def get_admin_stats():
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT COUNT(*) FROM users")
+    total_users = cursor.fetchone()[0]
+    
+    cursor.execute("SELECT COUNT(*) FROM video_jobs")
+    total_jobs = cursor.fetchone()[0]
+    
+    cursor.execute("SELECT COUNT(*) FROM video_jobs WHERE status = 'completed'")
+    completed_jobs = cursor.fetchone()[0]
+    
+    cursor.execute("SELECT SUM(credits) FROM users WHERE credits > 0")
+    total_credits = cursor.fetchone()[0] or 0
+    
+    conn.close()
+    
+    return {
+        "total_users": total_users,
+        "total_jobs": total_jobs,
+        "completed_jobs": completed_jobs,
+        "active_jobs": len(active_generation_users),
+        "queued_jobs": generation_queue.qsize(),
+        "total_credits_outstanding": total_credits
+    }
+
+def worker_loop():
+    """バックグラウンドでキューを監視し、1件ずつ動画を生成する"""
+    while True:
+        try:
+            # キューからジョブを取得 (priority, job_id, theme, email, user_id, is_pro)
+            # block=Trueでジョブが来るまで待機
+            priority, job_id, theme, email, user_id, is_pro = generation_queue.get()
+            print(f"[WORKER] Starting job {job_id} (Priority: {priority})")
+            _process_video_logic(job_id, theme, email, user_id, is_pro)
+            generation_queue.task_done()
+            # 完了後にactive_generation_usersから削除
+            if email in active_generation_users:
+                active_generation_users.remove(email)
+        except Exception as e:
+            print(f"[WORKER] Error in worker loop: {str(e)}")
+            time.sleep(5) # エラー時は少し待機
+
+# ワーカーのスレッドを開始
+worker_thread = threading.Thread(target=worker_loop, daemon=True)
+worker_thread.start()
+
 @app.get("/api/active-job")
 async def get_active_job(request: Request):
     user_info = request.session.get("user")
@@ -559,6 +616,13 @@ def update_progress_gradually(job_id: str, current: int, target: int, duration_s
         update_job_db(job_id, progress=progress)
 
 def process_video_background(job_id: str, theme: str, email: str, user_id: str, is_pro: bool):
+    # キューにジョブを追加
+    # Proユーザーは優先度0（最優先）、Freeは1
+    priority = 0 if is_pro else 1
+    update_job_db(job_id, message="Waiting in priority queue...")
+    generation_queue.put((priority, job_id, theme, email, user_id, is_pro))
+
+def _process_video_logic(job_id: str, theme: str, email: str, user_id: str, is_pro: bool):
     stop_event = threading.Event()
     progress_thread = None
 
@@ -598,7 +662,8 @@ def process_video_background(job_id: str, theme: str, email: str, user_id: str, 
         
         system_prompt = "あなたはTikTok/Shorts向けの短尺動画の台本ライターです。"
         if is_pro:
-            system_prompt += "指定されたテーマについて、1分（60秒）程度で読める、詳細で魅力的なネイティブ英語の台本を作成してください。分量は150〜180語程度にしてください。"
+            # Renderのメモリ制限を考慮し、Proは45秒程度（約120語）を目標にする
+            system_prompt += "指定されたテーマについて、45秒程度で読める、詳細で魅力的なネイティブ英語の台本を作成してください。分量は120語程度にしてください。"
         else:
             system_prompt += "指定されたテーマについて、15〜20秒程度で読める、短く簡潔なネイティブ英語の台本を作成してください。"
             
