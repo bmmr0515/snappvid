@@ -533,6 +533,7 @@
             
             <button class="btn-text" id="headerLoginBtn" onclick="openModal('Login')">Login</button>
             <button class="btn-primary" id="headerSignupBtn" onclick="openModal('Sign Up')">Sign Up</button>
+            <button class="btn-text" id="headerLogoutBtn" onclick="logout()" style="display: none; color: #ff4444;">Logout</button>
             <div class="settings-icon" onclick="openModal('Settings')">⚙️</div>
         </div>
     </header>
@@ -666,6 +667,8 @@
                 currentEmail = email;
                 document.getElementById('headerLoginBtn').textContent = email;
                 document.getElementById('headerSignupBtn').style.display = 'none';
+                document.getElementById('headerLogoutBtn').style.display = 'block';
+                updateCreditDisplay(); // まず枠を表示
                 await loadUserProfile();
                 await checkActiveJob();
             }
@@ -678,12 +681,19 @@
                     localStorage.setItem('snappvid_email', email);
                     document.getElementById('headerLoginBtn').textContent = email;
                     document.getElementById('headerSignupBtn').style.display = 'none';
+                    document.getElementById('headerLogoutBtn').style.display = 'block';
                     window.history.replaceState({}, document.title, window.location.pathname);
+                    updateCreditDisplay(); // まず枠を表示
                     await loadUserProfile();
                     openPaywallModal();
                 }
             }
         });
+
+        function logout() {
+            localStorage.removeItem('snappvid_email');
+            window.location.href = '/logout'; // FastAPIのログアウトエンドポイントへ
+        }
 
         async function loadUserProfile() {
             if (!currentEmail) return;

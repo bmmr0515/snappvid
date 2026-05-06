@@ -226,6 +226,15 @@ class AuthResponse(BaseModel):
 
 
 
+@app.get("/login")
+async def login_shortcut():
+    return RedirectResponse(url="/auth/google/login")
+
+@app.get('/logout')
+async def logout(request: Request):
+    request.session.clear()
+    return RedirectResponse(url="/")
+
 @app.get('/auth/google/login')
 async def google_login(request: Request):
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
@@ -234,7 +243,9 @@ async def google_login(request: Request):
     # Redirect URI is the callback endpoint
     redirect_uri = request.url_for('google_callback')
     # Fix for environments behind proxy (like Render)
-    redirect_uri = str(redirect_uri).replace("http://", "https://") if "localhost" not in str(redirect_uri) else str(redirect_uri)
+    if "localhost" not in str(redirect_uri):
+        redirect_uri = str(redirect_uri).replace("http://", "https://")
+    
     return await oauth.google.authorize_redirect(request, redirect_uri)
 
 @app.get('/auth/google/callback')
@@ -273,8 +284,10 @@ async def google_callback(request: Request):
         
     conn.close()
     
-    # Redirect back to index.html with authentication data in the URL hash or query params
-    # Using query params for simplicity, the frontend will read them and clear the URL
+    # セッションにユーザー情報を保存
+    request.session["user"] = {"email": email, "id": user_id}
+    
+    # Redirect back to index.html
     return RedirectResponse(url=f"/?oauth=success&email={email}&credits={credits}")
 
 # ==== Stripe Endpoints ====
