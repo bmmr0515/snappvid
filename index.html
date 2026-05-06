@@ -518,16 +518,19 @@
 
     <!-- Header -->
     <header>
-        <div class="logo">
+        <div class="logo" onclick="window.location.reload()" style="cursor: pointer;">
             SnappVid
         </div>
         <div class="header-actions">
-            <div id="creditDisplay" style="display: none; align-items: center; gap: 12px; margin-right: 16px;">
-                <span style="color: var(--text-secondary); font-weight: 500; display: flex; align-items: center; gap: 8px;">
-                    Credits: <span id="creditCount" style="color: white; font-weight: bold; font-size: 16px;">0</span>
-                    <button id="headerPlusBtn" onclick="openTopupModal()" title="Buy Credits" style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: white; border-radius: 50%; width: 22px; height: 22px; font-size: 14px; font-weight: bold; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'">+</button>
-                </span>
+            <!-- クレジット表示エリア -->
+            <div id="creditDisplay" style="display: none; align-items: center; gap: 10px;">
+                <div class="credit-badge" onclick="openPlanModal()" style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); padding: 5px 12px; border-radius: 20px; display: flex; align-items: center; gap: 8px; cursor: pointer; transition: all 0.2s;">
+                    <span style="font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">Credits:</span>
+                    <span id="creditCount" style="color: white; font-weight: 700; font-size: 15px;">0</span>
+                    <div id="headerPlusBtn" onclick="event.stopPropagation(); openTopupModal();" style="background: var(--text-primary); color: var(--bg-color); width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 800; margin-left: 4px;">+</div>
+                </div>
             </div>
+            
             <button class="btn-text" id="headerLoginBtn" onclick="openModal('Login')">Login</button>
             <button class="btn-primary" id="headerSignupBtn" onclick="openModal('Sign Up')">Sign Up</button>
             <div class="settings-icon" onclick="openModal('Settings')">⚙️</div>
@@ -706,22 +709,22 @@
 
         function updateCreditDisplay() {
             const countSpan = document.getElementById('creditCount');
+            if (!countSpan) return;
             countSpan.textContent = currentCredits === -1 ? '∞' : currentCredits;
             
             const floatingBtn = document.getElementById('floatingUpgradeBtn');
             const plusBtn = document.getElementById('headerPlusBtn');
+            const creditDisplay = document.getElementById('creditDisplay');
             
-            document.getElementById('creditDisplay').style.display = 'flex';
-            floatingBtn.classList.add('visible');
+            if (creditDisplay) creditDisplay.style.display = 'flex';
+            if (floatingBtn) floatingBtn.classList.add('visible');
             
             if (currentCredits !== -1 && currentCredits <= 20) {
-                countSpan.classList.add('credit-warning');
-                plusBtn.style.animation = 'flashWarning 1s infinite';
-                floatingBtn.style.animation = 'flashWarning 1s infinite';
+                countSpan.style.color = '#ff4444';
+                if (plusBtn) plusBtn.style.animation = 'flashWarning 1s infinite';
             } else {
-                countSpan.classList.remove('credit-warning');
-                plusBtn.style.animation = 'none';
-                floatingBtn.style.animation = 'none';
+                countSpan.style.color = 'white';
+                if (plusBtn) plusBtn.style.animation = 'none';
             }
         }
 
