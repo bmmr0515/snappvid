@@ -383,7 +383,7 @@ async def generate_video(request: Request, body: VideoRequest, background_tasks:
     
     conn.close()
     
-    is_pro = (plan_status == "Pro") or is_special_trial
+    is_pro = (plan_status == "Pro")
     active_generation_users.add(email)
     
     job_id = str(uuid.uuid4())
@@ -571,7 +571,6 @@ def process_video_background(job_id: str, theme: str, email: str, user_id: str, 
         update_job_db(job_id, progress=final_val)
 
     try:
-        is_special_trial = (email == "moriretsu06@gmail.com")
         timestamp = int(time.time())
         # セキュリティ強化のため推測不可能なファイル名にする
         unique_id = str(uuid.uuid4())[:8]
@@ -701,9 +700,15 @@ def process_video_background(job_id: str, theme: str, email: str, user_id: str, 
             current_time += phrase_duration
             
         if not is_pro:
+            # 無料版：透かしをより確実に表示
             wm_clip = TextClip(
-                "Powered by SnappVid", fontsize=20, color='white', font=selected_font
-            ).set_position(('center', 800)).set_duration(duration).set_opacity(0.4)
+                "Powered by SnappVid (Free Plan)", 
+                fontsize=24, 
+                color='white', 
+                font=selected_font,
+                stroke_color='black',
+                stroke_width=1
+            ).set_position(('center', 780)).set_duration(duration).set_opacity(0.6)
             text_clips.append(wm_clip)
         
         print(f"[{job_id}] STEP 4: Starting video synthesis...")
@@ -711,8 +716,13 @@ def process_video_background(job_id: str, theme: str, email: str, user_id: str, 
         
         # 背景画像の設定
         bg_clip = ImageClip(bg_image_path).set_duration(duration)
-        # メモリ節約のためズームアニメーション( Ken Burns)を一旦無効化
-        # 解像度をさらに落としてメモリ消費を抑える (480x854)
+        
+        if is_pro:
+            # Proユーザーには滑らかなズームアニメーション（Ken Burns）を追加
+            # 負荷を抑えるため倍率を控えめ（10%増）にする
+            bg_clip = bg_clip.resize(lambda t: 1.0 + 0.1 * (t / duration))
+            print(f"[{job_id}] Zoom effect applied for Pro user.")
+            
         bg_clip = bg_clip.resize(height=854).set_position(('center', 'center'))
         
         final_video = CompositeVideoClip([bg_clip] + text_clips, size=(480, 854))
