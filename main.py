@@ -598,7 +598,7 @@ def process_video_background(job_id: str, theme: str, email: str, user_id: str, 
         
         system_prompt = "あなたはTikTok/Shorts向けの短尺動画の台本ライターです。"
         if is_pro:
-            system_prompt += "指定されたテーマについて、30〜45秒程度で読める、詳細で魅力的なネイティブ英語の台本を作成してください。"
+            system_prompt += "指定されたテーマについて、1分（60秒）程度で読める、詳細で魅力的なネイティブ英語の台本を作成してください。分量は150〜180語程度にしてください。"
         else:
             system_prompt += "指定されたテーマについて、15〜20秒程度で読める、短く簡潔なネイティブ英語の台本を作成してください。"
             
@@ -728,12 +728,7 @@ def process_video_background(job_id: str, theme: str, email: str, user_id: str, 
         # 背景画像の設定
         bg_clip = ImageClip(bg_image_path).set_duration(duration)
         
-        if is_pro:
-            # Proユーザーには滑らかなズームアニメーション（Ken Burns）を追加
-            # メモリ消費を抑えるため、倍率は5%増（0.05）に抑える
-            bg_clip = bg_clip.resize(lambda t: 1.0 + 0.05 * (t / duration))
-            print(f"[{job_id}] Subtle zoom effect applied for Pro user.")
-            
+        # 安定性を最優先し、アニメーション（Lambda）は使用せずにリサイズのみ行う
         bg_clip = bg_clip.resize(height=854).set_position(('center', 'center'))
         
         final_video = CompositeVideoClip([bg_clip] + text_clips, size=(480, 854))
