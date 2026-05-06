@@ -523,7 +523,7 @@
         </div>
         <div class="header-actions">
             <!-- クレジット表示エリア -->
-            <div id="creditDisplay" style="display: none; align-items: center; gap: 10px;">
+            <div id="creditDisplay" style="display: flex; align-items: center; gap: 10px; opacity: 0; pointer-events: none; transition: opacity 0.3s;">
                 <div class="credit-badge" onclick="openPlanModal()" style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); padding: 5px 12px; border-radius: 20px; display: flex; align-items: center; gap: 8px; cursor: pointer; transition: all 0.2s;">
                     <span style="font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">Credits:</span>
                     <span id="creditCount" style="color: white; font-weight: 700; font-size: 15px;">0</span>
@@ -716,7 +716,10 @@
             const plusBtn = document.getElementById('headerPlusBtn');
             const creditDisplay = document.getElementById('creditDisplay');
             
-            if (creditDisplay) creditDisplay.style.display = 'flex';
+            if (creditDisplay) {
+                creditDisplay.style.opacity = '1';
+                creditDisplay.style.pointerEvents = 'auto';
+            }
             if (floatingBtn) floatingBtn.classList.add('visible');
             
             if (currentCredits !== -1 && currentCredits <= 20) {
@@ -892,6 +895,11 @@
         */
 
         function openModal(type) {
+            if (type === 'Login' || type === 'Sign Up') {
+                // Google Loginへリダイレクト
+                window.location.href = "/login";
+                return;
+            }
             modalTitle.textContent = type;
             if(type === 'Settings') {
                 authForm.style.display = 'none';
